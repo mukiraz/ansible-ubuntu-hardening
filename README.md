@@ -322,6 +322,113 @@ Once the live target infrastructure has completed its hardening lifecycle, confi
 make production-ssh-user
 ```
 
+## 9. Automated Secret Scanning with Git Hooks
+
+To guarantee absolute operational anonymity and prevent accidental credential leaks into the local Git history, this repository utilizes a native Git `pre-commit` hook. This configuration forces Gitleaks to audit your staged codebase automatically before any commit is finalized.
+
+### 9.1. Automated Setup (Recommended)
+
+If your local environment is initialized via the centralized orchestration framework, you can activate the protection hook with a single command:
+
+```bash
+# Programmatically inject the Gitleaks guard into your local Git hook lifecycle
+make setup-hooks
+
+```
+
+### 9.2. Manual Hook Configuration
+
+If you prefer to establish the defensive hook layer manually on your Ubuntu host, execute the following commands precisely from your repository root (`~/Development/ansible-ubuntu-hardening`):
+
+#### Step 1: Create the Pre-Commit Hook File
+
+Git stores executable hook scripts inside the hidden `.git/hooks/` directory. Create a new file named `pre-commit` inside this space:
+
+```bash
+nano .git/hooks/pre-commit
+
+```
+
+#### Step 2: Inject the Gitleaks Execution Logic
+
+Paste the following production-grade shell script into the editor. This script intercepts the commit chain, checks for Gitleaks availability, and enforces a strict scan against cached modifications:
+
+```bash
+#!/bin/bash
+
+# DevSecOps Automation: Pre-Commit Secret Scanner Guard
+# Intercepts the commit workflow to verify zero cryptographic leaks exist in staged assets.
+
+# Ensure Gitleaks binary is locally accessible on the host PATH
+if ! command -v gitleaks &> /dev/null; then
+    echo "========================================================================="
+    echo "🚨 DEVSECOPS SECURITY WARNING: Gitleaks binary not detected on your host!"
+    echo "Please run 'make setup' or visit https://github.com/gitleaks/gitleaks"
+    echo "Commit blocked to preserve repository security compliance."
+    echo "========================================================================="
+    exit 1
+fi
+
+echo "🛡️  [DevSecOps] Initiating automated Gitleaks secret scanning on staged assets..."
+
+# Execute Gitleaks against staged (cached) alterations using local Git history boundaries
+gitleaks detect --log-opts="--cached" --verbose
+
+# Capture the exit code of the scanning engine
+GITLEAKS_STATUS=$?
+
+if [ $GITLEAKS_STATUS -eq 0 ]; then
+    echo "✅ [DevSecOps] Code audit successful. No secrets or tokens detected."
+    exit 0
+else
+    echo "========================================================================="
+    echo "🚨 DEPLOYMENT BLOCKED: Hardcoded secrets or tokens detected in your diff!"
+    echo "Review the Gitleaks verbose log above, purge the tokens, and re-stage."
+    echo "========================================================================="
+    exit 1
+fi
+
+```
+
+#### Step 3: Enforce Executable Permissions
+
+By default, Git ignores scripts inside the hooks folder unless they possess explicit system execution flags. Grant the necessary permissions via `chmod`:
+
+```bash
+chmod +x .git/hooks/pre-commit
+
+```
+
+---
+
+### 9.3. Verification & Operational Testing
+
+Once the hook is armed, your daily development workflow gains an active cryptographic firewall.
+
+#### Scenario A: Secure Commit (Passing State)
+
+When you modify safe project documentation or configurations and commit the changes:
+
+```bash
+git add README.md
+git commit -m "docs: updating automation parameters"
+
+```
+
+*Output:* The hook prints the shield banner, Gitleaks scans the diff, returns a zero exit code, and Git allows the commit to pass successfully.
+
+#### Scenario B: Accidental Leak Attempt (Blocked State)
+
+If you accidentally leave a live provider token or unencrypted password inside a file and attempt to commit it:
+
+```bash
+echo "CONTABO_API_KEY=rQ8acl08R0uQU5D9U0" >> ansible/group_vars/production.yml # gitleaks:allow
+git add ansible/group_vars/production.yml
+git commit -m "feat: adding production provider connectivity variables"
+
+```
+
+*Output:* Gitleaks flags the high-entropy string, outputs the exact file line details to stdout, throws an exit code of `1`, and **the commit is instantly aborted**. Your branch state remains safe, and the secret never touches the local commit ledger.
 
 ## License
 This project is open-source software licensed under the **MIT License** with an explicit operational system-lockout disclaimer. See the [LICENSE](LICENSE) file for the full text before deploying to real infrastructure.
