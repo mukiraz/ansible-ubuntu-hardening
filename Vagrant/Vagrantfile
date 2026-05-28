@@ -76,12 +76,6 @@ Vagrant.configure("2") do |config|
     sed -i 's/.*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
     sed -i 's/.*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 
-    # CRITICAL UBUNTU 24.04 ENGINE FIX: Clear systemd ssh.socket overrides
-    if [ -d /etc/systemd/system/ssh.socket.d ]; then
-        echo "NOTICE: Clearing Ubuntu 24.04 systemd ssh.socket drop-in rules..."
-        rm -rf /etc/systemd/system/ssh.socket.d/*
-    fi
-
     # Flush changes to systemd core layers and cycle the daemon state
     systemctl daemon-reload
     systemctl restart ssh
