@@ -1,0 +1,6 @@
+.env
+.env.local
+.vagrant/
+ansible/.ansible/
+*.pem
+*.key

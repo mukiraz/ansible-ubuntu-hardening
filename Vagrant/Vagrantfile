@@ -1,0 +1,91 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+# =============================================================================
+# VAGRANT INFRASTRUCTURE CONFIGURATION (Refactored & .env Synced)
+# =============================================================================
+
+require 'fileutils'
+
+# STEP 1: Parse and Load Environment Variables Safely from .env
+env_file = File.expand_path("../.env", File.dirname(__FILE__))
+
+if File.exist?(env_file)
+  File.readlines(env_file).each do |line|
+    # Skip empty lines or lines that start directly with a comment character
+    clean_line = line.strip
+    next if clean_line.empty? || clean_line.start_with?('#')
+    
+    # Strip inline comments (e.g., VARIABLE=value # comment here)
+    clean_line = clean_line.split('#').first.strip
+    
+    # Separate key and value on the first '=' symbol encountered
+    key, value = clean_line.split('=', 2)
+    
+    if key && value
+      # Strip outer quotes and handle potential Windows CRLF lines
+      ENV[key.strip] = value.strip.gsub(/^["']|["']$/, '')
+    end
+  end
+else
+  puts "NOTICE: .env file not found at #{env_file}. Using default fallback values."
+end
+
+# STEP 2: Extract Variables and Sync with Makefile Specifications
+ROOT_PASS = ENV['STAGING_ROOT_PASSWORD'] || 'placeholder_dont_use_in_prod'
+VM_IP     = ENV['STAGING_SERVER_IP']     || '192.168.50.10'
+
+# STEP 3: Virtual Machine Provisioning and Orchestration Engine
+Vagrant.configure("2") do |config|
+  # Base Operating System Image Selection
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.hostname = "ubuntu-24-04-staging"
+  
+  # Host-Only Isolated Network Interface Configuration
+  config.vm.network "private_network", ip: VM_IP
+
+  # Storage Expansion Layer Verification
+  if Vagrant.has_plugin?("vagrant-disksize")
+    config.disksize.size = '75GB'
+  else
+    config.vm.provision "shell", inline: "echo 'INFO: 75GB Disk simulation skipped. Install vagrant-disksize plugin to enable.'", run: "always"
+  end
+
+  # Hardware Resource Profile Management (VirtualBox Provider)
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "Ubuntu_24_04_Staging"
+    vb.memory = "8192" # 8GB RAM Allocations
+    vb.cpus = 4        # 4 vCPU Core Allocations
+    vb.customize ["modifyvm", :id, "--vram", "32"]
+    vb.gui = false
+  end
+  
+  # OS-Level Live Cloud Infrastructure (Contabo) Environment Simulation
+  config.vm.provision "shell", inline: <<-SHELL
+    echo "----------------------------------------------------------------"
+    echo "NOTICE: Initializing Raw Cloud Server Emulation (Contabo Sandbox)..."
+    echo "----------------------------------------------------------------"
+
+    # Enforce default root credentials pulled from the environment configuration
+    echo "root:#{ROOT_PASS}" | chpasswd
+
+    # Temporary OpenSSH Server configuration allowing root credential parsing
+    mkdir -p /etc/ssh/sshd_config.d
+    echo "PermitRootLogin yes" > /etc/ssh/sshd_config.d/99-root-login.conf
+    echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config.d/99-root-login.conf
+    
+    sed -i 's/.*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+    sed -i 's/.*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+    # CRITICAL UBUNTU 24.04 ENGINE FIX: Clear systemd ssh.socket overrides
+    if [ -d /etc/systemd/system/ssh.socket.d ]; then
+        echo "NOTICE: Clearing Ubuntu 24.04 systemd ssh.socket drop-in rules..."
+        rm -rf /etc/systemd/system/ssh.socket.d/*
+    fi
+
+    # Flush changes to systemd core layers and cycle the daemon state
+    systemctl daemon-reload
+    systemctl restart ssh
+
+    echo "SUCCESS: Provisioning complete. Target accepts Root password access on Port 22."
+  SHELL
+end

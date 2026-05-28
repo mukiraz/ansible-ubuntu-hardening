@@ -1,0 +1,23 @@
+---
+# =============================================================================
+# CIS OPERATING SYSTEM HARDENING PLAYBOOK
+# =============================================================================
+- name: Apply CIS Ubuntu 24.04 LTS Hardening Baselines (Direct Root Access)
+  hosts: all
+  remote_user: root
+  gather_facts: yes
+
+  tasks:
+    # =========================================================================
+    # STAGE 1: Custom Infrastructure Realignment (SSH Port, UFW, System Updates)
+    # =========================================================================
+    - name: Run Custom Ubuntu Hardening Tasks
+      ansible.builtin.include_role:
+        name: "../roles/ubuntu_hardening"
+
+    # =========================================================================
+    # STAGE 2: Global Security Bastion (200+ CIS Compliance Items & Kernel Tuning)
+    # =========================================================================
+    - name: Run DevSec OS Hardening Role
+      ansible.builtin.include_role:
+        name: "../roles/dev-sec.os-hardening"

@@ -1,0 +1,9 @@
+---
+# =============================================================================
+# UBUNTU HARDENING ROLE - HANDLERS (Direct Root Access Compliant)
+# =============================================================================
+
+- name: "trigger restart sshd"
+  ansible.builtin.service:
+    name: ssh
+    state: restarted

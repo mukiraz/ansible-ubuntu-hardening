@@ -1,0 +1,43 @@
+---
+# =============================================================================
+# ANSIBLE GLOBAL CONTROL PANEL (Staging & Production Router)
+# =============================================================================
+
+# --- 1. USER AND SECURITY INFRASTRUCTURE ---
+# Define the dedicated administrator username deployed on all hardened targets
+created_username: "{{ lookup('env', 'ANSIBLE_SUDO_USER') | default('admin_user', true) }}"
+
+# Dynamically route and map the appropriate SSH private key based on the active inventory file
+ssh_key_name: >-
+  {{
+    lookup('env', 'PRODUCTION_SSH_KEY_NAME') if (inventory_file is search('production'))
+    else lookup('env', 'STAGING_SSH_KEY_NAME') | default('id_ed25519_generic', true)
+  }}
+ssh_key_path: "~/.ssh/{{ ssh_key_name }}.pub"
+
+# --- 2. FIREWALL AND PORT CONFIGURATIONS ---
+# Parse the secure custom SSH port from environment variables, defaulting to 48322
+custom_ssh_port: "{{ lookup('env', 'CUSTOM_SSH_PORT') | default('48322', true) }}"
+
+# Enforce strict synchronization between the SSH application layer and UFW rules
+allowed_firewall_ports:
+  - { port: "{{ custom_ssh_port }}", proto: "tcp", comment: "Custom Secure SSH Port" }
+  - { port: "80", proto: "tcp", comment: "HTTP for Nginx Proxy" }
+  - { port: "443", proto: "tcp", comment: "HTTPS for Nginx Proxy" }
+
+# Control switch for heavy system package upgrades (Overridden programmatically via Makefile)
+run_heavy_updates: false
+
+# --- 3. DEV-SEC OS HARDENING EXCEPTIONS (DOCKER FRIENDLY) ---
+# Override kernel variables to ensure seamless containment virtualization compatibility
+sysctl_overwrite:
+  net.ipv4.ip_forward: 1
+  net.ipv4.conf.all.forwarding: 1
+  net.ipv6.conf.all.forwarding: 1
+  fs.protected_hardlinks: 1
+  fs.protected_symlinks: 1
+
+# Additional platform compliance and security parameters
+security_init_network_ipv4_forwarding: true
+security_restrict_core_dumps: true
+disabled_services: []

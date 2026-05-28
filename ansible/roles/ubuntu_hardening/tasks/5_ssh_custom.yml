@@ -1,0 +1,61 @@
+---
+# =============================================================================
+# HARDENING | STEP 5 - Custom SSH Hardening (Modular Execution)
+# =============================================================================
+
+- name: "SSH | 5.1a - Change Default SSH Port"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?Port\s+'
+    line: "Port {{ ubuntu_hardening_ssh_port }}"
+    state: present
+  notify: trigger restart sshd
+  tags: [ssh_config]
+
+- name: "SSH | 5.1b - Disable Root Login directly"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin\s+'
+    line: "PermitRootLogin no"
+    state: present
+  notify: trigger restart sshd
+  tags: [ssh_config]
+
+- name: "SSH | 5.1c - Disable Password Authentication"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PasswordAuthentication\s+'
+    line: "PasswordAuthentication no"
+    state: present
+  notify: trigger restart sshd
+  tags: [ssh_config]
+
+- name: "SSH | 5.1d - Disable Empty Passwords"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitEmptyPasswords\s+'
+    line: "PermitEmptyPasswords no"
+    state: present
+  notify: trigger restart sshd
+  tags: [ssh_config]
+
+# =============================================================================
+# SECURITY BANNER
+# =============================================================================
+- name: "SSH | 5.2 - Configure Legal Security Banner (Issue/Motd)"
+  ansible.builtin.copy:
+    content: "{{ ubuntu_hardening_banner_text }}\n"
+    dest: /etc/issue.net
+    owner: root
+    group: root
+    mode: '0644'
+  tags: [ssh_banner]
+
+- name: "SSH | 5.3 - Link Banner into SSH Daemon Configuration"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?Banner\s+'
+    line: "Banner /etc/issue.net"
+    state: present
+  notify: trigger restart sshd
+  tags: [ssh_banner]

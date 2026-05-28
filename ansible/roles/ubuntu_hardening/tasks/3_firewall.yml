@@ -1,0 +1,49 @@
+---
+# =============================================================================
+# HARDENING | STEP 3 - Docker Friendly UFW Firewall (Modular Execution)
+# =============================================================================
+
+- name: "FIREWALL | 3.1a - Reset UFW to Factory Defaults"
+  community.general.ufw:
+    state: reset
+  tags: [ufw_rules, firewall]
+
+- name: "FIREWALL | 3.1b - Enforce Default Deny Incoming Policy"
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+  tags: [ufw_rules, firewall]
+
+- name: "FIREWALL | 3.1c - Enforce Default Allow Outgoing Policy"
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+  tags: [ufw_rules, firewall]
+
+- name: "FIREWALL | 3.1d - Open Managed Ports from Group Variables"
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto | default('tcp') }}"
+    comment: "{{ item.comment | default('Managed by Ansible') }}"
+  loop: "{{ ubuntu_hardening_firewall_ports }}"
+  tags: [ufw_rules, firewall]
+
+- name: "FIREWALL | 3.1e - Ensure UFW is Enabled and Persisted"
+  community.general.ufw:
+    state: enabled
+  tags: [ufw_rules, firewall]
+
+# =============================================================================
+# VERIFICATION
+# =============================================================================
+- name: "FIREWALL | 3.2 - Verify Firewall Status"
+  ansible.builtin.command: ufw status verbose
+  register: ufw_status_output
+  changed_when: false
+  tags: [ufw_verify]
+
+- name: "FIREWALL | 3.3 - Show Firewall Verification in Logs"
+  ansible.builtin.debug:
+    var: ufw_status_output.stdout_lines
+  tags: [ufw_verify]

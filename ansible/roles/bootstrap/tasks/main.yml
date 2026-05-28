@@ -1,0 +1,60 @@
+---
+# =============================================================================
+# SERVER BOOTSTRAP - USER CREATION & FINAL LOCKDOWN (Reversed Strategy)
+# =============================================================================
+
+# =============================================================================
+# STEP 1: CREATE SYSTEM USER & GROUPS
+# =============================================================================
+- name: "BOOTSTRAP | 1.1 - Create the primary admin user ({{ bootstrap_username }})"
+  ansible.builtin.user:
+    name: "{{ bootstrap_username }}"
+    shell: /bin/bash
+    groups: sudo, adm
+    append: yes
+    create_home: yes
+    state: present
+  tags: [bootstrap_user]
+
+- name: "BOOTSTRAP | 1.2 - Configure passwordless sudo for the admin user"
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ bootstrap_username }}"
+    content: "{{ bootstrap_username }} ALL=(ALL) NOPASSWD: ALL"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: 'visudo -cf %s'
+  tags: [bootstrap_sudoers]
+
+# =============================================================================
+# STEP 2: DEPLOY SSH KEYS USING NATIVE MODULES (Pure and Secure Execution)
+# =============================================================================
+- name: "BOOTSTRAP | 2.1 - Deploy Local SSH Public Key to the admin user"
+  ansible.builtin.authorized_key:
+    user: "{{ bootstrap_username }}"
+    state: present
+    key: "{{ lookup('file', bootstrap_ssh_key_path) }}"
+    manage_dir: yes # Automatically creates the .ssh directory and enforces correct permissions (0700/0600)
+  tags: [bootstrap_ssh]
+
+# =============================================================================
+# STEP 3: FINAL SEAL (Final Lockdown and Password Elimination)
+# =============================================================================
+- name: "BOOTSTRAP | 3.1 - Lock root account password entirely"
+  ansible.builtin.shell: |
+    set -o pipefail
+    passwd -l root
+  args:
+    executable: /bin/bash
+  tags: [bootstrap_lockdown]
+
+- name: "BOOTSTRAP | 3.2 - Confirm final user configuration status"
+  ansible.builtin.command: "id {{ bootstrap_username }}"
+  register: user_verification
+  changed_when: false
+  tags: [bootstrap_verify]
+
+- name: "BOOTSTRAP | 3.3 - Show verification info"
+  ansible.builtin.debug:
+    msg: "Bootstrap complete! User '{{ bootstrap_username }}' is fully configured with passwordless sudo and SSH keys."
+  tags: [bootstrap_verify]

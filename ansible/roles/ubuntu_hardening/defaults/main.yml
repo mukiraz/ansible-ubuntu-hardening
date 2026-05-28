@@ -1,0 +1,20 @@
+---
+# =============================================================================
+# UBUNTU HARDENING ROLE - DEFAULT VARIABLES (Safe & Clean Defaults)
+# =============================================================================
+
+ubuntu_hardening_perform_update: true
+ubuntu_hardening_configure_ssh: true
+ubuntu_hardening_configure_ufw: true
+
+# If not defined in upper layers (all.yml or .env), fall back to the secure standard port 48322
+ubuntu_hardening_ssh_port: "{{ custom_ssh_port | default('48322', true) }}"
+
+# Dynamic firewall matrix to eliminate hardcoded values and prevent port asymmetry mismatches
+ubuntu_hardening_firewall_ports: "{{ allowed_firewall_ports | default([
+  { 'port': custom_ssh_port | default('48322', true), 'proto': 'tcp', 'comment': 'Secure SSH Port' },
+  { 'port': '80', 'proto': 'tcp', 'comment': 'HTTP for Nginx Proxy' },
+  { 'port': '443', 'proto': 'tcp', 'comment': 'HTTPS for Nginx Proxy' }
+]) }}"
+
+ubuntu_hardening_banner_text: "WARNING: Authorized access only. All activities are logged and monitored."

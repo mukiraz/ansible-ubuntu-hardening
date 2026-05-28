@@ -1,0 +1,22 @@
+---
+# =============================================================================
+# FINAL SERVER BOOTSTRAP PLAYBOOK
+# =============================================================================
+- name: Final Server Bootstrap - Setup Sudo User and Lock Root
+  hosts: all
+  gather_facts: yes # Gathering facts to programmatically discover accurate user home directory paths
+  remote_user: root # Executing the final sequence under administrative root authorization
+
+  # VARIABLE ADAPTER LAYER: Mapping centralized and clean group variables 
+  # from group_vars/all.yml directly into specific role requirements.
+  vars:
+    bootstrap_username: "{{ created_username }}"
+    bootstrap_ssh_key_path: "{{ ssh_key_path }}"
+
+  tasks:
+    # =========================================================================
+    # CLOSING PHASE: Provision Secure Admin User and Seal Remote Root Space
+    # =========================================================================
+    - name: Execute Server Finalization via Bootstrap Role
+      ansible.builtin.include_role:
+        name: "../roles/bootstrap"

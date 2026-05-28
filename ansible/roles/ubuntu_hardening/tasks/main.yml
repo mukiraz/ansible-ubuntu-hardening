@@ -1,0 +1,19 @@
+---
+# =============================================================================
+# UBUNTU HARDENING - TASKS ROUTER (Central Distribution Center)
+# =============================================================================
+
+- name: "OPERATIONS | 1.0 - Trigger System Update Tasks"
+  ansible.builtin.include_tasks: 0_system_update.yml
+  when: ubuntu_hardening_perform_update | bool
+  tags: [ubuntu_update, system_prep]
+
+- name: "OPERATIONS | 2.0 - Trigger Custom SSH Hardening Tasks"
+  ansible.builtin.include_tasks: 5_ssh_custom.yml
+  when: ubuntu_hardening_configure_ssh | bool
+  tags: [ubuntu_ssh, ssh_hardening]
+
+- name: "OPERATIONS | 3.0 - Trigger Custom UFW Firewall Tasks"
+  ansible.builtin.include_tasks: 3_firewall.yml
+  when: ubuntu_hardening_configure_ufw | bool
+  tags: [ubuntu_ufw, firewall_hardening]
