@@ -244,6 +244,12 @@ production-bootstrap: ## STEP 3 (PRODUCTION): Connect via live custom port to pr
 	--private-key=~/.ssh/$(PRODUCTION_SSH_KEY_NAME) \
 	--extra-vars "ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=root ansible_port=$(CUSTOM_SSH_PORT) created_username=$(ANSIBLE_SUDO_USER) ssh_key_path=~/.ssh/$(PRODUCTION_SSH_KEY_NAME).pub"
 
+staging: ## Execute full zırhlı simulation pipeline against local sandbox
+	@echo "🚀 Starting Staging Deployment Lifecycle against Vagrant Sandbox..."
+	$(MAKE) staging-push-root-key
+	$(MAKE) staging-harden
+	$(MAKE) staging-bootstrap
+	
 # =============================================================================
 # CONVENIENCE SSH TUNNELING SHORTCUTS
 # =============================================================================

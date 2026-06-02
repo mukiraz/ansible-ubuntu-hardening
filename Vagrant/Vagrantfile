@@ -43,6 +43,9 @@ Vagrant.configure("2") do |config|
   # Host-Only Isolated Network Interface Configuration
   config.vm.network "private_network", ip: VM_IP
 
+  # REAL WORLD EMULATION: Disable Vagrant's automatic key rotation
+  config.ssh.insert_key = false
+
   # Storage Expansion Layer Verification
   if Vagrant.has_plugin?("vagrant-disksize")
     config.disksize.size = '75GB'
@@ -64,6 +67,10 @@ Vagrant.configure("2") do |config|
     echo "----------------------------------------------------------------"
     echo "NOTICE: Initializing Raw Cloud Server Emulation (Contabo Sandbox)..."
     echo "----------------------------------------------------------------"
+
+    # HARDENING AUDIT: Purge backdoor authorized keys right after initial boot sequence
+    rm -rf /home/vagrant/.ssh/authorized_keys
+    rm -rf /root/.ssh/authorized_keys
 
     # Enforce default root credentials pulled from the environment configuration
     echo "root:#{ROOT_PASS}" | chpasswd
