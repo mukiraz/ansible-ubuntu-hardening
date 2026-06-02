@@ -44,11 +44,13 @@ create-env-file: ## Interactive wizard to securely generate the initial .env fil
 	echo "  ANSIBLE UBUNTU HARDENING - INTERACTIVE CONFIGURATION WIZARD"; \
 	echo "============================================================================="; \
 	echo "Default values are shown inside brackets []."; \
-	echo "Press ENTER directly to keep the default fallback values."; \
 	echo "-----------------------------------------------------------------------------"; \
 	\
-	read -p "1. Common Secure SSH Port [2222]: " port; \
-	port=$${port:-2222}; \
+	read -p "1. Common Secure SSH Port [Press ENTER for random secure port]: " port; \
+	if [ -z "$$port" ]; then \
+		shuf_port=$$(shuf -i 2000-65000 -n 1); \
+		port=$$shuf_port; \
+	fi; \
 	\
 	read -p "2. Dedicated Administrator Username [admin_user]: " suser; \
 	suser=$${suser:-admin_user}; \
@@ -65,18 +67,15 @@ create-env-file: ## Interactive wizard to securely generate the initial .env fil
 	read -p "6. Production (Live) SSH Key Name [id_ed25519_prod_real]: " pkey; \
 	pkey=$${pkey:-id_ed25519_prod_real}; \
 	\
+	read -p "7. Run Heavy OS Package Upgrades (dist-upgrade)? (true/false) [false]: " heavy; \
+	heavy=$${heavy:-false}; \
+	\
 	while [ -z "$$pip" ]; do \
-		read -p "7. Production (Live) Server IP Address (Required): " pip; \
-		if [ -z "$$pip" ]; then \
-			echo "ERROR: Production server IP address cannot be empty!"; \
-		fi \
+		read -p "8. Production (Live) Server IP Address (Required): " pip; \
 	done; \
 	\
 	while [ -z "$$ppass" ]; do \
-		read -p "8. Live Server Initial Temporary Root Password (e.g. xY8zPq9Wst...): " ppass; \
-		if [ -z "$$ppass" ]; then \
-			echo "ERROR: Initial root password cannot be empty!"; \
-		fi \
+		read -p "9. Live Server Initial Temporary Root Password: " ppass; \
 	done; \
 	\
 	echo "# =============================================================================" > .env; \
@@ -86,6 +85,7 @@ create-env-file: ## Interactive wizard to securely generate the initial .env fil
 	echo "# --- GLOBAL SECURITY SETTINGS ---" >> .env; \
 	echo "CUSTOM_SSH_PORT=$$port" >> .env; \
 	echo "ANSIBLE_SUDO_USER=$$suser" >> .env; \
+	echo "RUN_HEAVY_UPDATES=$$heavy" >> .env; \
 	echo "" >> .env; \
 	echo "# --- STAGING (LOCAL LABORATORY) SETTINGS ---" >> .env; \
 	echo "STAGING_SSH_KEY_NAME=$$skey" >> .env; \
@@ -98,7 +98,7 @@ create-env-file: ## Interactive wizard to securely generate the initial .env fil
 	echo "PRODUCTION_ROOT_PASSWORD=$$ppass" >> .env; \
 	\
 	echo "-----------------------------------------------------------------------------"; \
-	echo "SUCCESS: Anonymous and secure .env file successfully generated!"; \
+	echo "SUCCESS: .env configuration generated successfully!"; \
 	echo "=============================================================================";
 
 help: ## Display this help menu with all available automation targets
@@ -218,7 +218,7 @@ production-harden: ## STEP 2 (PRODUCTION): Execute CIS hardening playbook on liv
 	ansible-playbook -i $(PRODUCTION_INVENTORY) \
 	$(PLAYBOOK_HARDEN) \
 	--private-key=~/.ssh/$(PRODUCTION_SSH_KEY_NAME) \
-	--extra-vars "ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=root ansible_port=22 custom_ssh_port=$(CUSTOM_SSH_PORT) run_heavy_updates=true sysctl_overwrite={}"
+	--extra-vars "ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=root ansible_port=22 custom_ssh_port=$(CUSTOM_SSH_PORT) run_heavy_updates=$(RUN_HEAVY_UPDATES) sysctl_overwrite={}"
 
 # =============================================================================
 # STEP 3: ADMINISTRATOR PROVISIONING & ROOT ACCOUNT LOCKDOWN
@@ -244,6 +244,12 @@ production-bootstrap: ## STEP 3 (PRODUCTION): Connect via live custom port to pr
 	--private-key=~/.ssh/$(PRODUCTION_SSH_KEY_NAME) \
 	--extra-vars "ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=root ansible_port=$(CUSTOM_SSH_PORT) created_username=$(ANSIBLE_SUDO_USER) ssh_key_path=~/.ssh/$(PRODUCTION_SSH_KEY_NAME).pub"
 
+staging: ## Execute full zırhlı simulation pipeline against local sandbox
+	@echo "🚀 Starting Staging Deployment Lifecycle against Vagrant Sandbox..."
+	$(MAKE) staging-push-root-key
+	$(MAKE) staging-harden
+	$(MAKE) staging-bootstrap
+	
 # =============================================================================
 # CONVENIENCE SSH TUNNELING SHORTCUTS
 # =============================================================================
