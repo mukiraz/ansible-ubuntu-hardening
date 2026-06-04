@@ -13,7 +13,7 @@ ssh_key_name: >-
     lookup('env', 'PRODUCTION_SSH_KEY_NAME') if (inventory_file is search('production'))
     else lookup('env', 'STAGING_SSH_KEY_NAME') | default('id_ed25519_generic', true)
   }}
-ssh_key_path: "~/.ssh/{{ ssh_key_name }}.pub"
+ssh_key_path: "{{ lookup('env', 'HOME') }}/.ssh/{{ ssh_key_name }}.pub"
 
 # --- 2. FIREWALL AND PORT CONFIGURATIONS ---
 # Parse the secure custom SSH port from environment variables, defaulting to 48322

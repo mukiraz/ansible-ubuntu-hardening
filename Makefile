@@ -12,6 +12,18 @@ endif
 CUSTOM_SSH_PORT       ?= 55555
 ANSIBLE_SUDO_USER     ?= admin_user
 
+# Per-target SSH port override. Defaults to the global custom SSH port so
+# staging can simulate production where the SSH service already runs on the
+# hardened/custom port.
+STAGING_SSH_PORT      ?= $(CUSTOM_SSH_PORT)
+PRODUCTION_SSH_PORT   ?= $(CUSTOM_SSH_PORT)
+
+# Ports to use when connecting as root before hardening (default 22).
+# These ensure push-root-key and initial hardening connect to the server's
+# default SSH listener (usually 22) even when the hardened/custom port is
+# later switched to `$(CUSTOM_SSH_PORT)`.
+STAGING_ROOT_SSH_PORT ?= 22
+PRODUCTION_ROOT_SSH_PORT ?= 22
 # STAGING (LOCAL LAB) VARIABLES
 STAGING_SSH_KEY_NAME  ?= id_ed25519_generic
 STAGING_SERVER_IP     ?= 192.168.50.10
@@ -180,21 +192,37 @@ vagrant-destroy: ## Completely wipe out and purge the local laboratory instance
 # STEP 1: SSH PUBLIC KEY INJECTION OPERATIONS
 # =============================================================================
 
-staging-push-root-key: check-keys ## STEP 1 (STAGING): Authorize local SSH public key on raw sandbox root account
-	@echo "NOTICE: Injecting staging public key into local sandbox root user space..."
-	sshpass -p "$(STAGING_ROOT_PASSWORD)" ssh-copy-id -o StrictHostKeyChecking=no -p 22 -i ~/.ssh/$(STAGING_SSH_KEY_NAME).pub root@$(STAGING_SERVER_IP)
-	@echo "SUCCESS: Key delivered. Testing passwordless execution layer..."
-	ssh -i ~/.ssh/$(STAGING_SSH_KEY_NAME) -p 22 -o StrictHostKeyChecking=no root@$(STAGING_SERVER_IP) "echo 'SUCCESS: Staging SSH Key Authentication Loop Verified!'"
+staging-push-root-key: check-keys ## STEP 1 (STAGING): Create staging sudo user and provision its SSH key using root access
+	@echo "NOTICE: Injecting staging root key and provisioning sudo user SSH key into local sandbox..."
+	sshpass -p "$(STAGING_ROOT_PASSWORD)" ssh-copy-id -o StrictHostKeyChecking=no -p $(STAGING_ROOT_SSH_PORT) -i ~/.ssh/$(STAGING_SSH_KEY_NAME).pub root@$(STAGING_SERVER_IP)
+	sshpass -p "$(STAGING_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(STAGING_ROOT_SSH_PORT) root@$(STAGING_SERVER_IP) \
+		"id -u $(ANSIBLE_SUDO_USER) >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo $(ANSIBLE_SUDO_USER)"
+	sshpass -p "$(STAGING_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(STAGING_ROOT_SSH_PORT) root@$(STAGING_SERVER_IP) "cat > /tmp/$(ANSIBLE_SUDO_USER).pub" < ~/.ssh/$(STAGING_SSH_KEY_NAME).pub
+	sshpass -p "$(STAGING_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(STAGING_ROOT_SSH_PORT) root@$(STAGING_SERVER_IP) \
+		"mkdir -p /home/$(ANSIBLE_SUDO_USER)/.ssh && chmod 700 /home/$(ANSIBLE_SUDO_USER)/.ssh && cat /tmp/$(ANSIBLE_SUDO_USER).pub >> /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chmod 600 /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chown -R $(ANSIBLE_SUDO_USER):$(ANSIBLE_SUDO_USER) /home/$(ANSIBLE_SUDO_USER)/.ssh && rm -f /tmp/$(ANSIBLE_SUDO_USER).pub"
+	sshpass -p "$(STAGING_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(STAGING_ROOT_SSH_PORT) root@$(STAGING_SERVER_IP) \
+		"echo '$(ANSIBLE_SUDO_USER) ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/$(ANSIBLE_SUDO_USER) && chmod 440 /etc/sudoers.d/$(ANSIBLE_SUDO_USER)"
+	@echo "SUCCESS: Staging sudo user created and SSH key installed. Verifying secure handshake..."
+	ssh -i ~/.ssh/$(STAGING_SSH_KEY_NAME) -p $(STAGING_ROOT_SSH_PORT) -o StrictHostKeyChecking=no $(ANSIBLE_SUDO_USER)@$(STAGING_SERVER_IP) "echo 'SUCCESS: Staging Live Server Sudo User Handshake Established!'"
 
-production-push-root-key: check-keys ## STEP 1 (PRODUCTION): Authorize production SSH public key on live server root
-	@echo "WARNING: Injecting production public key into live target infrastructure..."
+production-push-root-key: check-keys ## STEP 1 (PRODUCTION): Create production sudo user and provision its SSH key using root access
+	@echo "WARNING: Injecting production sudo user and provisioning its SSH key on live target infrastructure..."
 	@if [ "$(PRODUCTION_SERVER_IP)" = "127.0.0.1" ]; then \
 		echo "ERROR: Aborting execution. PRODUCTION_SERVER_IP is unconfigured or mapped to localhost!"; \
 		exit 1; \
 	fi
-	sshpass -p "$(PRODUCTION_ROOT_PASSWORD)" ssh-copy-id -o StrictHostKeyChecking=no -p 22 -i ~/.ssh/$(PRODUCTION_SSH_KEY_NAME).pub root@$(PRODUCTION_SERVER_IP)
-	@echo "SUCCESS: Production key delivered. Verifying secure handshake..."
-	ssh -i ~/.ssh/$(PRODUCTION_SSH_KEY_NAME) -p 22 -o StrictHostKeyChecking=no root@$(PRODUCTION_SERVER_IP) "echo 'SUCCESS: Production Live Server Handshake Established!'"
+	@echo "INFO: Removing old host key for $(PRODUCTION_SERVER_IP) from known_hosts if it exists..."
+	-ssh-keygen -f ~/.ssh/known_hosts -R "$(PRODUCTION_SERVER_IP)" 2>/dev/null
+	sshpass -p "$(PRODUCTION_ROOT_PASSWORD)" ssh-copy-id -o StrictHostKeyChecking=no -p $(PRODUCTION_ROOT_SSH_PORT) -i ~/.ssh/$(PRODUCTION_SSH_KEY_NAME).pub root@$(PRODUCTION_SERVER_IP)
+	sshpass -p "$(PRODUCTION_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(PRODUCTION_ROOT_SSH_PORT) root@$(PRODUCTION_SERVER_IP) \
+		"id -u $(ANSIBLE_SUDO_USER) >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo $(ANSIBLE_SUDO_USER)"
+	sshpass -p "$(PRODUCTION_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(PRODUCTION_ROOT_SSH_PORT) root@$(PRODUCTION_SERVER_IP) "cat > /tmp/$(ANSIBLE_SUDO_USER).pub" < ~/.ssh/$(PRODUCTION_SSH_KEY_NAME).pub
+	sshpass -p "$(PRODUCTION_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(PRODUCTION_ROOT_SSH_PORT) root@$(PRODUCTION_SERVER_IP) \
+		"mkdir -p /home/$(ANSIBLE_SUDO_USER)/.ssh && chmod 700 /home/$(ANSIBLE_SUDO_USER)/.ssh && cat /tmp/$(ANSIBLE_SUDO_USER).pub >> /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chmod 600 /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chown -R $(ANSIBLE_SUDO_USER):$(ANSIBLE_SUDO_USER) /home/$(ANSIBLE_SUDO_USER)/.ssh && rm -f /tmp/$(ANSIBLE_SUDO_USER).pub"
+	sshpass -p "$(PRODUCTION_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(PRODUCTION_ROOT_SSH_PORT) root@$(PRODUCTION_SERVER_IP) \
+		"echo '$(ANSIBLE_SUDO_USER) ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/$(ANSIBLE_SUDO_USER) && chmod 440 /etc/sudoers.d/$(ANSIBLE_SUDO_USER)"
+	@echo "SUCCESS: Production sudo user created and SSH key installed. Verifying secure handshake..."
+	ssh -i ~/.ssh/$(PRODUCTION_SSH_KEY_NAME) -p $(PRODUCTION_ROOT_SSH_PORT) -o StrictHostKeyChecking=no $(ANSIBLE_SUDO_USER)@$(PRODUCTION_SERVER_IP) "echo 'SUCCESS: Production Live Server Sudo User Handshake Established!'"
 
 # =============================================================================
 # STEP 2: CIS COMPLIANT OPERATING SYSTEM HARDENING
@@ -206,7 +234,7 @@ staging-harden: ## STEP 2 (STAGING): Execute CIS hardening playbook on local lab
 	ansible-playbook -i $(STAGING_INVENTORY) \
 	$(PLAYBOOK_HARDEN) \
 	--private-key=~/.ssh/$(STAGING_SSH_KEY_NAME) \
-	--extra-vars "ansible_host=$(STAGING_SERVER_IP) ansible_ssh_user=root ansible_port=22 custom_ssh_port=$(CUSTOM_SSH_PORT) run_heavy_updates=false sysctl_overwrite={}"
+	--extra-vars "ansible_host=$(STAGING_SERVER_IP) ansible_ssh_user=root ansible_port=$(STAGING_ROOT_SSH_PORT) custom_ssh_port=$(CUSTOM_SSH_PORT) run_heavy_updates=false sysctl_overwrite={}"
 
 production-harden: ## STEP 2 (PRODUCTION): Execute CIS hardening playbook on live instance (Updates active)
 	@echo "WARNING: Executing full CIS Security Baseline Hardening on live production node..."
@@ -218,7 +246,7 @@ production-harden: ## STEP 2 (PRODUCTION): Execute CIS hardening playbook on liv
 	ansible-playbook -i $(PRODUCTION_INVENTORY) \
 	$(PLAYBOOK_HARDEN) \
 	--private-key=~/.ssh/$(PRODUCTION_SSH_KEY_NAME) \
-	--extra-vars "ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=root ansible_port=22 custom_ssh_port=$(CUSTOM_SSH_PORT) run_heavy_updates=$(RUN_HEAVY_UPDATES) sysctl_overwrite={}"
+	--extra-vars "ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=root ansible_port=$(PRODUCTION_ROOT_SSH_PORT) custom_ssh_port=$(CUSTOM_SSH_PORT) run_heavy_updates=$(RUN_HEAVY_UPDATES) sysctl_overwrite={}"
 
 # =============================================================================
 # STEP 3: ADMINISTRATOR PROVISIONING & ROOT ACCOUNT LOCKDOWN
@@ -230,7 +258,7 @@ staging-bootstrap: ## STEP 3 (STAGING): Access via custom port to provision secu
 	ansible-playbook -i $(STAGING_INVENTORY) \
 	$(PLAYBOOK_BOOTSTRAP) \
 	--private-key=~/.ssh/$(STAGING_SSH_KEY_NAME) \
-	--extra-vars "ansible_host=$(STAGING_SERVER_IP) ansible_ssh_user=root ansible_port=$(CUSTOM_SSH_PORT) created_username=$(ANSIBLE_SUDO_USER) ssh_key_path=~/.ssh/$(STAGING_SSH_KEY_NAME).pub"
+	--extra-vars "ansible_host=$(STAGING_SERVER_IP) ansible_ssh_user=$(ANSIBLE_SUDO_USER) ansible_become=true ansible_become_method=sudo ansible_port=$(STAGING_SSH_PORT) created_username=$(ANSIBLE_SUDO_USER) ssh_key_path=$(HOME)/.ssh/$(STAGING_SSH_KEY_NAME).pub"
 
 production-bootstrap: ## STEP 3 (PRODUCTION): Connect via live custom port to provision secure user and lock root
 	@echo "WARNING: Executing final server provisioning and root account lockdown on live node..."
@@ -242,7 +270,7 @@ production-bootstrap: ## STEP 3 (PRODUCTION): Connect via live custom port to pr
 	ansible-playbook -i $(PRODUCTION_INVENTORY) \
 	$(PLAYBOOK_BOOTSTRAP) \
 	--private-key=~/.ssh/$(PRODUCTION_SSH_KEY_NAME) \
-	--extra-vars "ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=root ansible_port=$(CUSTOM_SSH_PORT) created_username=$(ANSIBLE_SUDO_USER) ssh_key_path=~/.ssh/$(PRODUCTION_SSH_KEY_NAME).pub"
+	--extra-vars "ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=$(ANSIBLE_SUDO_USER) ansible_become=true ansible_become_method=sudo ansible_port=$(PRODUCTION_SSH_PORT) created_username=$(ANSIBLE_SUDO_USER) ssh_key_path=$(HOME)/.ssh/$(PRODUCTION_SSH_KEY_NAME).pub"
 
 staging: ## Execute full zırhlı simulation pipeline against local sandbox
 	@echo "🚀 Starting Staging Deployment Lifecycle against Vagrant Sandbox..."
@@ -250,12 +278,18 @@ staging: ## Execute full zırhlı simulation pipeline against local sandbox
 	$(MAKE) staging-harden
 	$(MAKE) staging-bootstrap
 	
+production: ## Execute full hardened pipeline against live production node
+	@echo "WARNING: Starting Production Deployment Lifecycle against live node..."
+	$(MAKE) production-push-root-key
+	$(MAKE) production-harden
+	$(MAKE) production-bootstrap
+	
 # =============================================================================
 # CONVENIENCE SSH TUNNELING SHORTCUTS
 # =============================================================================
 
 staging-ssh-user: ## Establish an instant passwordless SSH terminal with the Staging admin user
-	ssh -i ~/.ssh/$(STAGING_SSH_KEY_NAME) -p $(CUSTOM_SSH_PORT) $(ANSIBLE_SUDO_USER)@$(STAGING_SERVER_IP) -o StrictHostKeyChecking=no
+	ssh -i ~/.ssh/$(STAGING_SSH_KEY_NAME) -p $(STAGING_SSH_PORT) $(ANSIBLE_SUDO_USER)@$(STAGING_SERVER_IP) -o StrictHostKeyChecking=no
 
 production-ssh-user: ## Establish an instant passwordless SSH terminal with the Live production user
-	ssh -i ~/.ssh/$(PRODUCTION_SSH_KEY_NAME) -p $(CUSTOM_SSH_PORT) $(ANSIBLE_SUDO_USER)@$(PRODUCTION_SERVER_IP) -o StrictHostKeyChecking=no
+	ssh -i ~/.ssh/$(PRODUCTION_SSH_KEY_NAME) -p $(PRODUCTION_SSH_PORT) $(ANSIBLE_SUDO_USER)@$(PRODUCTION_SERVER_IP) -o StrictHostKeyChecking=no
