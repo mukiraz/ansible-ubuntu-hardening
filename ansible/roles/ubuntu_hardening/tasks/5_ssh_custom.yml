@@ -3,9 +3,10 @@
 # HARDENING | STEP 5 - Custom SSH Hardening (Modular Execution)
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# CRITICAL UBUNTU 24.04 ENGINE FIX: Clear systemd ssh.socket overrides
-# -----------------------------------------------------------------------------
+# =============================================================================
+# STEP 5.0: CRITICAL UBUNTU 24.04 ENGINE FIX (SYSTEMD SOCKET OVERRIDES)
+# =============================================================================
+
 - name: "SSH | 5.0a - Disable Ubuntu 24.04 default systemd ssh.socket to prevent deployment lockouts"
   ansible.builtin.file:
     path: /etc/systemd/system/ssh.socket.d
@@ -17,9 +18,10 @@
     daemon_reload: yes
   tags: [ssh_config, systemd_fix]
 
-# -----------------------------------------------------------------------------
-# SSH DAEMON CORE CONFIGURATION
-# -----------------------------------------------------------------------------
+# =============================================================================
+# STEP 5.1: SSH DAEMON CORE CONFIGURATION
+# =============================================================================
+
 - name: "SSH | 5.1a - Change Default SSH Port"
   ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
@@ -57,8 +59,9 @@
   tags: [ssh_config]
 
 # =============================================================================
-# SECURITY BANNER
+# STEP 5.2: LEGAL SECURITY BANNER CONFIGURATION
 # =============================================================================
+
 - name: "SSH | 5.2 - Configure Legal Security Banner (Issue/Motd)"
   ansible.builtin.copy:
     content: "{{ ubuntu_hardening_banner_text }}\n"

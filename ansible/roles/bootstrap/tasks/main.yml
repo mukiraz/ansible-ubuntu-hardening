@@ -2,13 +2,13 @@
 # =============================================================================
 # SERVER BOOTSTRAP - FINAL VERIFICATION & ROOT LOCKDOWN
 # =============================================================================
-# Note: User creation and sudoers configuration are handled in the
-# push-root-key stage. This role focuses on SSH key verification and
-# root account lockdown after hardening is complete.
+# User creation and sudoers configuration are handled in the push-root-key stage.
+# This role focuses on SSH key verification and post-hardening root account lockdown.
 
 # =============================================================================
 # STEP 1: VERIFY ADMIN USER & SSH CONFIGURATION
 # =============================================================================
+
 - name: "BOOTSTRAP | 1.0 - Check if admin user exists"
   ansible.builtin.command: "id {{ bootstrap_username }}"
   register: user_check
@@ -35,6 +35,7 @@
 # =============================================================================
 # STEP 2: FINAL LOCKDOWN - SEAL ROOT ACCOUNT
 # =============================================================================
+
 - name: "BOOTSTRAP | 2.0a - Remove SSH key from root's authorized_keys"
   ansible.builtin.file:
     path: /root/.ssh/authorized_keys

@@ -3,6 +3,8 @@
 # UBUNTU HARDENING ROLE - HANDLERS (Direct Root Access Compliant)
 # =============================================================================
 
+# --- SSH DAEMON RESTART HANDLER ---
+# Trigger an explicit restart of the SSH service upon configuration changes
 - name: "trigger restart sshd"
   ansible.builtin.service:
     name: ssh

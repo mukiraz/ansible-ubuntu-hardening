@@ -3,6 +3,10 @@
 # HARDENING | STEP 3 - Docker Friendly UFW Firewall (Modular Execution)
 # =============================================================================
 
+# =============================================================================
+# STEP 3.1: FIREWALL LIFECYCLE & CORE RULES IMPLEMENTATION
+# =============================================================================
+
 - name: "FIREWALL | 3.1a - Reset UFW to Factory Defaults"
   community.general.ufw:
     state: reset
@@ -35,8 +39,9 @@
   tags: [ufw_rules, firewall]
 
 # =============================================================================
-# VERIFICATION
+# STEP 3.2: POST-DEPLOYMENT COMPLIANCE VERIFICATION
 # =============================================================================
+
 - name: "FIREWALL | 3.2 - Verify Firewall Status"
   ansible.builtin.command: ufw status verbose
   register: ufw_status_output

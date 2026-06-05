@@ -9,287 +9,242 @@ ifneq (,$(wildcard ./.env))
 endif
 
 # --- STRICT SECURITY FALLBACKS FOR ENVIRONMENT VARIABLES ---
-CUSTOM_SSH_PORT       ?= 55555
-ANSIBLE_SUDO_USER     ?= admin_user
+CUSTOM_SSH_PORT          ?= 55555
+ANSIBLE_SUDO_USER        ?= admin_user
 
-# Per-target SSH port override. Defaults to the global custom SSH port so
-# staging can simulate production where the SSH service already runs on the
-# hardened/custom port.
-STAGING_SSH_PORT      ?= $(CUSTOM_SSH_PORT)
-PRODUCTION_SSH_PORT   ?= $(CUSTOM_SSH_PORT)
+STAGING_SSH_PORT         ?= $(CUSTOM_SSH_PORT)
+PRODUCTION_SSH_PORT      ?= $(CUSTOM_SSH_PORT)
 
-# Ports to use when connecting as root before hardening (default 22).
-# These ensure push-root-key and initial hardening connect to the server's
-# default SSH listener (usually 22) even when the hardened/custom port is
-# later switched to `$(CUSTOM_SSH_PORT)`.
-STAGING_ROOT_SSH_PORT ?= 22
+STAGING_ROOT_SSH_PORT    ?= 22
 PRODUCTION_ROOT_SSH_PORT ?= 22
-# STAGING (LOCAL LAB) VARIABLES
-STAGING_SSH_KEY_NAME  ?= id_ed25519_generic
-STAGING_SERVER_IP     ?= 192.168.50.10
-STAGING_ROOT_PASSWORD ?= placeholder_dont_use_in_prod
-STAGING_INVENTORY     ?= ansible/inventories/staging
 
-# PRODUCTION (LIVE SERVER) VARIABLES
+# Staging (Local Lab) Environments
+STAGING_SSH_KEY_NAME     ?= id_ed25519_generic
+STAGING_SERVER_IP        ?= 192.168.56.10
+STAGING_ROOT_PASSWORD    ?= placeholder_dont_use_in_prod
+STAGING_INVENTORY        ?= ansible/inventories/staging
+
+# Production (Live Server) Environments
 PRODUCTION_SSH_KEY_NAME  ?= id_ed25519_prod_real
 PRODUCTION_SERVER_IP     ?= 127.0.0.1
 PRODUCTION_ROOT_PASSWORD ?= placeholder_dont_use_in_prod
 PRODUCTION_INVENTORY     ?= ansible/inventories/production
 
 # --- AUTOMATION CORE PLAYBOOKS ---
-PLAYBOOK_BOOTSTRAP = ansible/playbooks/00_bootstrap_server.yml
-PLAYBOOK_HARDEN    = ansible/playbooks/01_harden_server.yml
+PLAYBOOK_BOOTSTRAP       := ansible/playbooks/00_bootstrap_server.yml
+PLAYBOOK_HARDEN          := ansible/playbooks/01_harden_server.yml
 
-# --- PHONY TARGET DECLARATIONS ---
-.PHONY: help create-env-file check-keys setup check-deps vagrant-up vagrant-destroy staging-push-root-key production-push-root-key staging-harden production-harden staging-bootstrap production-bootstrap staging-ssh-user production-ssh-user
+# --- ANSI TERMINAL COLORS FOR LOGGING ---
+COLOR_RESET              := \033[0m
+COLOR_INFO               := \033[36m
+COLOR_SUCCESS            := \033[32m
+COLOR_WARN               := \033[33m
+COLOR_ERROR              := \033[31m
+
+# =============================================================================
+# REUSABLE MACROS (DRY ENGINE)
+# =============================================================================
+
+# Function to inject public keys and provision initial sudo users using root access
+# Arguments: 1=ROOT_PASS, 2=ROOT_PORT, 3=KEY_NAME, 4=SERVER_IP
+define macro_push_root_key
+	@echo "$(COLOR_INFO)NOTICE: Injecting root key and provisioning sudo user into target...$(COLOR_RESET)"
+	sshpass -p "$(1)" ssh-copy-id -o StrictHostKeyChecking=no -p $(2) -i ~/.ssh/$(3).pub root@$(4)
+	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -p $(2) root@$(4) \
+		"id -u $(ANSIBLE_SUDO_USER) >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo $(ANSIBLE_SUDO_USER)"
+	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -p $(2) root@$(4) "cat > /tmp/$(ANSIBLE_SUDO_USER).pub" < ~/.ssh/$(3).pub
+	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -p $(2) root@$(4) \
+		"mkdir -p /home/$(ANSIBLE_SUDO_USER)/.ssh && chmod 700 /home/$(ANSIBLE_SUDO_USER)/.ssh && cat /tmp/$(ANSIBLE_SUDO_USER).pub >> /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chmod 600 /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chown -R $(ANSIBLE_SUDO_USER):$(ANSIBLE_SUDO_USER) /home/$(ANSIBLE_SUDO_USER)/.ssh && rm -f /tmp/$(ANSIBLE_SUDO_USER).pub"
+	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -p $(2) root@$(4) \
+		"echo '$(ANSIBLE_SUDO_USER) ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/$(ANSIBLE_SUDO_USER) && chmod 440 /etc/sudoers.d/$(ANSIBLE_SUDO_USER)"
+	@echo "$(COLOR_SUCCESS)SUCCESS: Sudo user configured. Verifying secure handshake...$(COLOR_RESET)"
+	ssh -i ~/.ssh/$(3) -p $(2) -o StrictHostKeyChecking=no $(ANSIBLE_SUDO_USER)@$(4) "echo 'SUCCESS: Remote Server Sudo User Handshake Established!'"
+endef
+
+# Function to execute core Ansible playbooks uniformly
+# Arguments: 1=INVENTORY, 2=PLAYBOOK, 3=KEY_NAME, 4=EXTRA_VARS
+define macro_run_playbook
+	ANSIBLE_HOST_KEY_CHECKING=False \
+	ansible-playbook -i $(1) $(2) --private-key=~/.ssh/$(3) --extra-vars "$(4)"
+endef
+
+# =============================================================================
+# PHONY TARGET DECLARATIONS
+# =============================================================================
+.PHONY: help create-env-file check-keys setup check-deps validate-prod-ip \
+        vagrant-up vagrant-destroy staging-push-root-key production-push-root-key \
+        staging-harden production-harden staging-bootstrap production-bootstrap \
+        staging production staging-ssh-user production-ssh-user
+
+help: ## Display this help menu with all available automation targets
+	@echo "Available Infrastructure Automation Commands:"
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "$(COLOR_INFO)%-30s$(COLOR_RESET) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+# =============================================================================
+# ENVIRONMENT PREPARATION & VALIDATION
+# =============================================================================
+
+validate-prod-ip: # Internal safeguard to ensure production target IP is configured correctly
+	@if [ "$(PRODUCTION_SERVER_IP)" = "127.0.0.1" ]; then \
+		echo "$(COLOR_ERROR)ERROR: Aborting execution. PRODUCTION_SERVER_IP is unconfigured or mapped to localhost!$(COLOR_RESET)"; \
+		exit 1; \
+	fi
+
+check-keys: ## Verify local presence of SSH keys, generate separate keys if missing
+	@if [ ! -f ~/.ssh/$(STAGING_SSH_KEY_NAME) ]; then \
+		echo "$(COLOR_WARN)NOTICE: Staging SSH key missing. Generating...$(COLOR_RESET)"; \
+		ssh-keygen -t ed25519 -f ~/.ssh/$(STAGING_SSH_KEY_NAME) -N "" -C "ansible_staging"; \
+	else \
+		echo "$(COLOR_SUCCESS)SUCCESS: Staging SSH key verified.$(COLOR_RESET)"; \
+	fi
+	@if [ ! -f ~/.ssh/$(PRODUCTION_SSH_KEY_NAME) ]; then \
+		echo "$(COLOR_WARN)NOTICE: Production SSH key missing. Generating...$(COLOR_RESET)"; \
+		ssh-keygen -t ed25519 -f ~/.ssh/$(PRODUCTION_SSH_KEY_NAME) -N "" -C "ansible_production"; \
+	else \
+		echo "$(COLOR_SUCCESS)SUCCESS: Production SSH key verified.$(COLOR_RESET)"; \
+	fi
+
+setup: check-keys ## Install local system dependencies on the Ubuntu host machine
+	@echo "$(COLOR_INFO)NOTICE: Initializing Ubuntu host system preparation...$(COLOR_RESET)"
+	sudo apt update
+	sudo apt install -y software-properties-common wget gpg curl git sshpass
+	@if ! grep -q "ansible/ansible" /etc/apt/sources.list /etc/apt/sources.list.d/*; then \
+		sudo add-apt-repository --yes --update ppa:ansible/ansible; \
+	fi
+	sudo apt install -y ansible
+	@if pgrep "VirtualBox|VBoxHeadless|VBoxSVC" > /dev/null; then \
+		echo "$(COLOR_WARN)WARNING: Active VirtualBox processes detected. Clearing for safe upgrades...$(COLOR_RESET)"; \
+		sudo pkill "VirtualBox|VBoxHeadless|VBoxSVC" || true; \
+		sleep 3; \
+	fi
+	@if [ ! -f /usr/share/keyrings/hashicorp-archive-keyring.gpg ]; then \
+		wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg; \
+		echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $$(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list; \
+	fi
+	sudo apt update && sudo apt install -y virtualbox vagrant
+	@echo "--------------------------------------------------"
+	@echo "$(COLOR_SUCCESS)SUCCESS: Local environment infrastructure components installed successfully!$(COLOR_RESET)"
+	@echo "Ansible Version: $$(ansible --version | head -n 1)"
+	@echo "Vagrant Version: $$(vagrant --version)"
+	@echo "--------------------------------------------------"
+
+check-deps: # Internal helper to validate hypervisor components
+	@which vagrant > /dev/null || (echo "$(COLOR_ERROR)ERROR: Vagrant not found! Run 'make setup' first.$(COLOR_RESET)" && exit 1)
+	@pgrep -f "VirtualBox|VBox" > /dev/null && echo "$(COLOR_INFO)NOTICE: VirtualBox core service engine is active.$(COLOR_RESET)" || true
+
+# =============================================================================
+# VAGRANT SANDBOX MANAGEMENT
+# =============================================================================
+
+vagrant-up: check-deps check-keys ## Launch or resume the host-isolated local laboratory sandbox
+	@echo "$(COLOR_INFO)NOTICE: Validating local staging environment matrix...$(COLOR_RESET)"
+	@if [ -d "Vagrant" ]; then \
+		STATUS=$$(cd Vagrant && vagrant status --machine-readable | grep ",state," | cut -d, -f4); \
+		if [ "$$STATUS" = "running" ]; then \
+			echo "$(COLOR_SUCCESS)SUCCESS: Staging sandbox instance is already active.$(COLOR_RESET)"; \
+		elif [ "$$STATUS" = "poweroff" ] || [ "$$STATUS" = "saved" ]; then \
+			cd Vagrant && vagrant up --provider=virtualbox; \
+		else \
+			cd Vagrant && vagrant up; \
+		fi; \
+	else \
+		echo "$(COLOR_ERROR)ERROR: Directory 'Vagrant' not found!$(COLOR_RESET)"; exit 1; \
+	fi
+
+vagrant-destroy: ## Wipe out and completely purge the local sandbox laboratory instance
+	@echo "$(COLOR_WARN)WARNING: Purging local staging virtual instance completely...$(COLOR_RESET)"
+	cd Vagrant && vagrant destroy -f
+
+# =============================================================================
+# STEP 1: SSH PUBLIC KEY INJECTION PIPELINES
+# =============================================================================
+
+staging-push-root-key: check-keys ## STEP 1 (STAGING): Inject key and provision sudo user into local sandbox
+	$(call macro_push_root_key,$(STAGING_ROOT_PASSWORD),$(STAGING_ROOT_SSH_PORT),$(STAGING_SSH_KEY_NAME),$(STAGING_SERVER_IP))
+
+production-push-root-key: validate-prod-ip check-keys ## STEP 1 (PRODUCTION): Inject key and provision sudo user into live target
+	@echo "$(COLOR_INFO)INFO: Clearing stale host keys for security alignment...$(COLOR_RESET)"
+	-ssh-keygen -f ~/.ssh/known_hosts -R "$(PRODUCTION_SERVER_IP)" 2>/dev/null
+	$(call macro_push_root_key,$(PRODUCTION_ROOT_PASSWORD),$(PRODUCTION_ROOT_SSH_PORT),$(PRODUCTION_SSH_KEY_NAME),$(PRODUCTION_SERVER_IP))
+
+# =============================================================================
+# STEP 2: CIS COMPLIANT OPERATING SYSTEM HARDENING
+# =============================================================================
+
+staging-harden: ## STEP 2 (STAGING): Apply CIS compliance playbooks on local lab (Port 22 -> Custom)
+	@echo "$(COLOR_INFO)NOTICE: Initializing full CIS Security Baseline Hardening on local sandbox...$(COLOR_RESET)"
+	$(call macro_run_playbook,$(STAGING_INVENTORY),$(PLAYBOOK_HARDEN),$(STAGING_SSH_KEY_NAME),ansible_host=$(STAGING_SERVER_IP) ansible_ssh_user=root ansible_port=$(STAGING_ROOT_SSH_PORT) custom_ssh_port=$(CUSTOM_SSH_PORT) run_heavy_updates=false sysctl_overwrite={})
+
+production-harden: validate-prod-ip ## STEP 2 (PRODUCTION): Apply CIS compliance playbooks on live remote instance
+	@echo "$(COLOR_WARN)WARNING: Executing full CIS Security Baseline Hardening on live production node...$(COLOR_RESET)"
+	$(call macro_run_playbook,$(PRODUCTION_INVENTORY),$(PLAYBOOK_HARDEN),$(PRODUCTION_SSH_KEY_NAME),ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=root ansible_port=$(PRODUCTION_ROOT_SSH_PORT) custom_ssh_port=$(CUSTOM_SSH_PORT) run_heavy_updates=$(RUN_HEAVY_UPDATES) sysctl_overwrite={})
+
+# =============================================================================
+# STEP 3: PRIVILEGE DEPLOYMENT & ROOT LOCKDOWN
+# =============================================================================
+
+staging-bootstrap: ## STEP 3 (STAGING): Establish secure custom port access layer and lock down remote root
+	@echo "$(COLOR_INFO)NOTICE: Connecting via secure custom port to seal root access privileges...$(COLOR_RESET)"
+	$(call macro_run_playbook,$(STAGING_INVENTORY),$(PLAYBOOK_BOOTSTRAP),$(STAGING_SSH_KEY_NAME),ansible_host=$(STAGING_SERVER_IP) ansible_ssh_user=$(ANSIBLE_SUDO_USER) ansible_become=true ansible_become_method=sudo ansible_port=$(STAGING_SSH_PORT) created_username=$(ANSIBLE_SUDO_USER) ssh_key_path=$(HOME)/.ssh/$(STAGING_SSH_KEY_NAME).pub)
+
+production-bootstrap: validate-prod-ip ## STEP 3 (PRODUCTION): Establish secure custom port access layer and lock down live root
+	@echo "$(COLOR_WARN)WARNING: Executing final server provisioning and root account lockdown on live node...$(COLOR_RESET)"
+	$(call macro_run_playbook,$(PRODUCTION_INVENTORY),$(PLAYBOOK_BOOTSTRAP),$(PRODUCTION_SSH_KEY_NAME),ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=$(ANSIBLE_SUDO_USER) ansible_become=true ansible_become_method=sudo ansible_port=$(PRODUCTION_SSH_PORT) created_username=$(ANSIBLE_SUDO_USER) ssh_key_path=$(HOME)/.ssh/$(PRODUCTION_SSH_KEY_NAME).pub)
+
+# =============================================================================
+# MONOLITHIC AUTOMATION ORCHESTRATORS
+# =============================================================================
+
+staging: ## Execute full staging automation simulation lifecycle sequentially
+	@echo "$(COLOR_SUCCESS) Starting Monolithic Staging Deployment Lifecycle against Sandbox Pipeline...$(COLOR_RESET)"
+	$(MAKE) staging-push-root-key
+	$(MAKE) staging-harden
+	$(MAKE) staging-bootstrap
+	@echo "$(COLOR_SUCCESS) Staging lifecycle complete. Sandbox is fully secure.$(COLOR_RESET)"
+
+production: validate-prod-ip ## Execute full production automation deployment pipeline sequentially
+	@echo "$(COLOR_WARN) WARNING: Executing full Production Deployment Lifecycle against live architecture...$(COLOR_RESET)"
+	$(MAKE) production-push-root-key
+	$(MAKE) production-harden
+	$(MAKE) production-bootstrap
+	@echo "$(COLOR_SUCCESS) Production lifecycle complete. Remote infrastructure secured.$(COLOR_RESET)"
+
+# =============================================================================
+# UTILITIES & QUICK CONVENIENCE SHORTCUTS
+# =============================================================================
+
+staging-ssh-user: ## Connect instantly to the local sandbox using the admin user profile
+	ssh -i ~/.ssh/$(STAGING_SSH_KEY_NAME) -p $(STAGING_SSH_PORT) $(ANSIBLE_SUDO_USER)@$(STAGING_SERVER_IP) -o StrictHostKeyChecking=no
+
+production-ssh-user: validate-prod-ip ## Connect instantly to the live production server using the admin user profile
+	ssh -i ~/.ssh/$(PRODUCTION_SSH_KEY_NAME) -p $(PRODUCTION_SSH_PORT) $(ANSIBLE_SUDO_USER)@$(PRODUCTION_SERVER_IP) -o StrictHostKeyChecking=no
 
 create-env-file: ## Interactive wizard to securely generate the initial .env file
 	@if [ -f .env ]; then \
-		echo "WARNING: An existing .env file was detected!"; \
+		echo "$(COLOR_WARN)WARNING: An existing .env file was detected!$(COLOR_RESET)"; \
 		read -p "Do you want to overwrite it? (y/N): " confirm; \
 		if [ "$$confirm" != "y" ] && [ "$$confirm" != "Y" ]; then \
-			echo "NOTICE: Operation aborted. Existing .env file remains untouched."; \
+			echo "NOTICE: Operation aborted. Configuration file remains unchanged."; \
 			exit 0; \
 		fi \
 	fi; \
 	echo "============================================================================="; \
 	echo "  ANSIBLE UBUNTU HARDENING - INTERACTIVE CONFIGURATION WIZARD"; \
 	echo "============================================================================="; \
-	echo "Default values are shown inside brackets []."; \
-	echo "-----------------------------------------------------------------------------"; \
-	\
 	read -p "1. Common Secure SSH Port [Press ENTER for random secure port]: " port; \
-	if [ -z "$$port" ]; then \
-		shuf_port=$$(shuf -i 2000-65000 -n 1); \
-		port=$$shuf_port; \
-	fi; \
-	\
-	read -p "2. Dedicated Administrator Username [admin_user]: " suser; \
-	suser=$${suser:-admin_user}; \
-	\
-	read -p "3. Staging (Local Lab) SSH Key Name [id_ed25519_server]: " skey; \
-	skey=$${skey:-id_ed25519_server}; \
-	\
-	read -p "4. Staging (Local Lab) Server IP Address [192.168.56.10]: " sip; \
-	sip=$${sip:-192.168.56.10}; \
-	\
-	read -p "5. Staging (Local Lab) Default Root Password [placeholder_root_pass]: " spass; \
-	spass=$${spass:-placeholder_root_pass}; \
-	\
-	read -p "6. Production (Live) SSH Key Name [id_ed25519_prod_real]: " pkey; \
-	pkey=$${pkey:-id_ed25519_prod_real}; \
-	\
-	read -p "7. Run Heavy OS Package Upgrades (dist-upgrade)? (true/false) [false]: " heavy; \
-	heavy=$${heavy:-false}; \
-	\
-	while [ -z "$$pip" ]; do \
-		read -p "8. Production (Live) Server IP Address (Required): " pip; \
-	done; \
-	\
-	while [ -z "$$ppass" ]; do \
-		read -p "9. Live Server Initial Temporary Root Password: " ppass; \
-	done; \
-	\
-	echo "# =============================================================================" > .env; \
-	echo "# ENVIRONMENT CONTROL PANEL (Centralized Variables - Global Standard)" >> .env; \
-	echo "# =============================================================================" >> .env; \
-	echo "" >> .env; \
-	echo "# --- GLOBAL SECURITY SETTINGS ---" >> .env; \
-	echo "CUSTOM_SSH_PORT=$$port" >> .env; \
-	echo "ANSIBLE_SUDO_USER=$$suser" >> .env; \
-	echo "RUN_HEAVY_UPDATES=$$heavy" >> .env; \
-	echo "" >> .env; \
-	echo "# --- STAGING (LOCAL LABORATORY) SETTINGS ---" >> .env; \
-	echo "STAGING_SSH_KEY_NAME=$$skey" >> .env; \
-	echo "STAGING_SERVER_IP=$$sip" >> .env; \
-	echo "STAGING_ROOT_PASSWORD=$$spass" >> .env; \
-	echo "" >> .env; \
-	echo "# --- PRODUCTION (LIVE SERVER) SETTINGS ---" >> .env; \
-	echo "PRODUCTION_SSH_KEY_NAME=$$pkey" >> .env; \
-	echo "PRODUCTION_SERVER_IP=$$pip" >> .env; \
-	echo "PRODUCTION_ROOT_PASSWORD=$$ppass" >> .env; \
-	\
+	if [ -z "$$port" ]; then port=$$(shuf -i 2000-65000 -n 1); fi; \
+	read -p "2. Dedicated Administrator Username [admin_user]: " suser; suser=$${suser:-admin_user}; \
+	read -p "3. Staging (Local Lab) SSH Key Name [id_ed25519_server]: " skey; skey=$${skey:-id_ed25519_server}; \
+	read -p "4. Staging (Local Lab) Server IP Address [192.168.56.10]: " sip; sip=$${sip:-192.168.56.10}; \
+	read -p "5. Staging (Local Lab) Default Root Password [placeholder_root_pass]: " spass; spass=$${spass:-placeholder_root_pass}; \
+	read -p "6. Production (Live) SSH Key Name [id_ed25519_prod_real]: " pkey; pkey=$${pkey:-id_ed25519_prod_real}; \
+	read -p "7. Run Heavy OS Package Upgrades (dist-upgrade)? (true/false) [false]: " heavy; heavy=$${heavy:-false}; \
+	while [ -z "$$pip" ]; do read -p "8. Production (Live) Server IP Address (Required): " pip; done; \
+	while [ -z "$$ppass" ]; do read -p "9. Live Server Initial Temporary Root Password: " ppass; done; \
+	echo "# =============================================================================\n# ENVIRONMENT CONTROL PANEL\n# =============================================================================\n" > .env; \
+	echo "CUSTOM_SSH_PORT=$$port\nANSIBLE_SUDO_USER=$$suser\nRUN_HEAVY_UPDATES=$$heavy\n" >> .env; \
+	echo "STAGING_SSH_KEY_NAME=$$skey\nSTAGING_SERVER_IP=$$sip\nSTAGING_ROOT_PASSWORD=$$spass\n" >> .env; \
+	echo "PRODUCTION_SSH_KEY_NAME=$$pkey\nPRODUCTION_SERVER_IP=$$pip\nPRODUCTION_ROOT_PASSWORD=$$ppass" >> .env; \
 	echo "-----------------------------------------------------------------------------"; \
-	echo "SUCCESS: .env configuration generated successfully!"; \
+	echo "$(COLOR_SUCCESS)SUCCESS: .env configuration generated successfully!$(COLOR_RESET)"; \
 	echo "=============================================================================";
-
-help: ## Display this help menu with all available automation targets
-	@echo "Available Infrastructure Automation Commands:"
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
-# --- ENVIRONMENT PREPARATION & PREREQUISITES ---
-
-check-keys: ## Verify local presence of SSH keys, generate separate keys if missing
-	@if [ ! -f ~/.ssh/$(STAGING_SSH_KEY_NAME) ]; then \
-		echo "NOTICE: Staging SSH key missing. Generating: ~/.ssh/$(STAGING_SSH_KEY_NAME)"; \
-		ssh-keygen -t ed25519 -f ~/.ssh/$(STAGING_SSH_KEY_NAME) -N "" -C "ansible_staging"; \
-	else \
-		echo "SUCCESS: Staging SSH key verified: ~/.ssh/$(STAGING_SSH_KEY_NAME)"; \
-	fi
-	@if [ ! -f ~/.ssh/$(PRODUCTION_SSH_KEY_NAME) ]; then \
-		echo "NOTICE: Production SSH key missing. Generating: ~/.ssh/$(PRODUCTION_SSH_KEY_NAME)"; \
-		ssh-keygen -t ed25519 -f ~/.ssh/$(PRODUCTION_SSH_KEY_NAME) -N "" -C "ansible_production"; \
-	else \
-		echo "SUCCESS: Production SSH key verified: ~/.ssh/$(PRODUCTION_SSH_KEY_NAME)"; \
-	fi
-
-setup: check-keys ## Install local dependencies (Ansible, Vagrant, VirtualBox) on Ubuntu host
-	@echo "NOTICE: Initializing Ubuntu host system preparation..."
-	@sudo apt update
-	@sudo apt install -y software-properties-common wget gpg curl git sshpass
-	@if ! grep -q "ansible/ansible" /etc/apt/sources.list /etc/apt/sources.list.d/*; then \
-		echo "NOTICE: Adding Ansible official PPA repository..."; \
-		sudo add-apt-repository --yes --update ppa:ansible/ansible; \
-	fi
-	@sudo apt install -y ansible
-	@if pgrep "VirtualBox|VBoxHeadless|VBoxSVC" > /dev/null; then \
-		echo "WARNING: Active VirtualBox processes detected. Sending pkill signal for upgrade safety..."; \
-		sudo pkill "VirtualBox|VBoxHeadless|VBoxSVC" || true; \
-		sleep 3; \
-	fi
-	@if [ ! -f /usr/share/keyrings/hashicorp-archive-keyring.gpg ]; then \
-		echo "NOTICE: Adding HashiCorp official repository and GPG signing key..."; \
-		wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg; \
-		echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $$(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list; \
-	fi
-	@sudo apt update
-	@sudo apt install -y virtualbox
-	@sudo apt install -y vagrant
-	@echo "--------------------------------------------------"
-	@echo "SUCCESS: Local environment components installed successfully!"
-	@echo "Ansible Version: $$(ansible --version | head -n 1)"
-	@echo "Vagrant Version: $$(vagrant --version)"
-	@echo "--------------------------------------------------"
-
-check-deps: ## Internal validation helper to ensure hypervisor services are accessible
-	@which vagrant > /dev/null || (echo "ERROR: Vagrant executable not found! Please run 'make setup' first." && exit 1)
-	@pgrep -f "VirtualBox|VBox" > /dev/null && echo "NOTICE: VirtualBox service engine is active." || true
-
-# --- VAGRANT VIRTUAL LABORATORY MANAGEMENT ---
-
-vagrant-up: check-deps check-keys ## Spin up or resume the local staging sandbox machine
-	@echo "NOTICE: Validating local staging environment matrix..."
-	@if [ -d "Vagrant" ]; then \
-		STATUS=$$(cd Vagrant && vagrant status --machine-readable | grep ",state," | cut -d, -f4); \
-		if [ "$$STATUS" = "running" ]; then \
-			echo "SUCCESS: Staging sandbox instance is already running."; \
-		elif [ "$$STATUS" = "poweroff" ] || [ "$$STATUS" = "saved" ]; then \
-			echo "NOTICE: Resuming suspended local instance in headless mode..."; \
-			cd Vagrant && vagrant up --provider=virtualbox; \
-		else \
-			echo "NOTICE: Launching pristine raw Ubuntu laboratory instance..."; \
-			cd Vagrant && vagrant up; \
-		fi; \
-	else \
-		echo "ERROR: Directory 'Vagrant' not found!"; exit 1; \
-	fi
-
-vagrant-destroy: ## Completely wipe out and purge the local laboratory instance
-	@echo "WARNING: Purging local staging virtual instance completely..."
-	cd Vagrant && vagrant destroy -f
-
-# =============================================================================
-# STEP 1: SSH PUBLIC KEY INJECTION OPERATIONS
-# =============================================================================
-
-staging-push-root-key: check-keys ## STEP 1 (STAGING): Create staging sudo user and provision its SSH key using root access
-	@echo "NOTICE: Injecting staging root key and provisioning sudo user SSH key into local sandbox..."
-	sshpass -p "$(STAGING_ROOT_PASSWORD)" ssh-copy-id -o StrictHostKeyChecking=no -p $(STAGING_ROOT_SSH_PORT) -i ~/.ssh/$(STAGING_SSH_KEY_NAME).pub root@$(STAGING_SERVER_IP)
-	sshpass -p "$(STAGING_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(STAGING_ROOT_SSH_PORT) root@$(STAGING_SERVER_IP) \
-		"id -u $(ANSIBLE_SUDO_USER) >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo $(ANSIBLE_SUDO_USER)"
-	sshpass -p "$(STAGING_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(STAGING_ROOT_SSH_PORT) root@$(STAGING_SERVER_IP) "cat > /tmp/$(ANSIBLE_SUDO_USER).pub" < ~/.ssh/$(STAGING_SSH_KEY_NAME).pub
-	sshpass -p "$(STAGING_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(STAGING_ROOT_SSH_PORT) root@$(STAGING_SERVER_IP) \
-		"mkdir -p /home/$(ANSIBLE_SUDO_USER)/.ssh && chmod 700 /home/$(ANSIBLE_SUDO_USER)/.ssh && cat /tmp/$(ANSIBLE_SUDO_USER).pub >> /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chmod 600 /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chown -R $(ANSIBLE_SUDO_USER):$(ANSIBLE_SUDO_USER) /home/$(ANSIBLE_SUDO_USER)/.ssh && rm -f /tmp/$(ANSIBLE_SUDO_USER).pub"
-	sshpass -p "$(STAGING_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(STAGING_ROOT_SSH_PORT) root@$(STAGING_SERVER_IP) \
-		"echo '$(ANSIBLE_SUDO_USER) ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/$(ANSIBLE_SUDO_USER) && chmod 440 /etc/sudoers.d/$(ANSIBLE_SUDO_USER)"
-	@echo "SUCCESS: Staging sudo user created and SSH key installed. Verifying secure handshake..."
-	ssh -i ~/.ssh/$(STAGING_SSH_KEY_NAME) -p $(STAGING_ROOT_SSH_PORT) -o StrictHostKeyChecking=no $(ANSIBLE_SUDO_USER)@$(STAGING_SERVER_IP) "echo 'SUCCESS: Staging Live Server Sudo User Handshake Established!'"
-
-production-push-root-key: check-keys ## STEP 1 (PRODUCTION): Create production sudo user and provision its SSH key using root access
-	@echo "WARNING: Injecting production sudo user and provisioning its SSH key on live target infrastructure..."
-	@if [ "$(PRODUCTION_SERVER_IP)" = "127.0.0.1" ]; then \
-		echo "ERROR: Aborting execution. PRODUCTION_SERVER_IP is unconfigured or mapped to localhost!"; \
-		exit 1; \
-	fi
-	@echo "INFO: Removing old host key for $(PRODUCTION_SERVER_IP) from known_hosts if it exists..."
-	-ssh-keygen -f ~/.ssh/known_hosts -R "$(PRODUCTION_SERVER_IP)" 2>/dev/null
-	sshpass -p "$(PRODUCTION_ROOT_PASSWORD)" ssh-copy-id -o StrictHostKeyChecking=no -p $(PRODUCTION_ROOT_SSH_PORT) -i ~/.ssh/$(PRODUCTION_SSH_KEY_NAME).pub root@$(PRODUCTION_SERVER_IP)
-	sshpass -p "$(PRODUCTION_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(PRODUCTION_ROOT_SSH_PORT) root@$(PRODUCTION_SERVER_IP) \
-		"id -u $(ANSIBLE_SUDO_USER) >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo $(ANSIBLE_SUDO_USER)"
-	sshpass -p "$(PRODUCTION_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(PRODUCTION_ROOT_SSH_PORT) root@$(PRODUCTION_SERVER_IP) "cat > /tmp/$(ANSIBLE_SUDO_USER).pub" < ~/.ssh/$(PRODUCTION_SSH_KEY_NAME).pub
-	sshpass -p "$(PRODUCTION_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(PRODUCTION_ROOT_SSH_PORT) root@$(PRODUCTION_SERVER_IP) \
-		"mkdir -p /home/$(ANSIBLE_SUDO_USER)/.ssh && chmod 700 /home/$(ANSIBLE_SUDO_USER)/.ssh && cat /tmp/$(ANSIBLE_SUDO_USER).pub >> /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chmod 600 /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chown -R $(ANSIBLE_SUDO_USER):$(ANSIBLE_SUDO_USER) /home/$(ANSIBLE_SUDO_USER)/.ssh && rm -f /tmp/$(ANSIBLE_SUDO_USER).pub"
-	sshpass -p "$(PRODUCTION_ROOT_PASSWORD)" ssh -o StrictHostKeyChecking=no -p $(PRODUCTION_ROOT_SSH_PORT) root@$(PRODUCTION_SERVER_IP) \
-		"echo '$(ANSIBLE_SUDO_USER) ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/$(ANSIBLE_SUDO_USER) && chmod 440 /etc/sudoers.d/$(ANSIBLE_SUDO_USER)"
-	@echo "SUCCESS: Production sudo user created and SSH key installed. Verifying secure handshake..."
-	ssh -i ~/.ssh/$(PRODUCTION_SSH_KEY_NAME) -p $(PRODUCTION_ROOT_SSH_PORT) -o StrictHostKeyChecking=no $(ANSIBLE_SUDO_USER)@$(PRODUCTION_SERVER_IP) "echo 'SUCCESS: Production Live Server Sudo User Handshake Established!'"
-
-# =============================================================================
-# STEP 2: CIS COMPLIANT OPERATING SYSTEM HARDENING
-# =============================================================================
-
-staging-harden: ## STEP 2 (STAGING): Execute CIS hardening playbook on local lab (Port 22 -> Custom)
-	@echo "NOTICE: Initializing full CIS Security Baseline Hardening on local sandbox..."
-	ANSIBLE_HOST_KEY_CHECKING=False \
-	ansible-playbook -i $(STAGING_INVENTORY) \
-	$(PLAYBOOK_HARDEN) \
-	--private-key=~/.ssh/$(STAGING_SSH_KEY_NAME) \
-	--extra-vars "ansible_host=$(STAGING_SERVER_IP) ansible_ssh_user=root ansible_port=$(STAGING_ROOT_SSH_PORT) custom_ssh_port=$(CUSTOM_SSH_PORT) run_heavy_updates=false sysctl_overwrite={}"
-
-production-harden: ## STEP 2 (PRODUCTION): Execute CIS hardening playbook on live instance (Updates active)
-	@echo "WARNING: Executing full CIS Security Baseline Hardening on live production node..."
-	@if [ "$(PRODUCTION_SERVER_IP)" = "127.0.0.1" ]; then \
-		echo "ERROR: Aborting execution. PRODUCTION_SERVER_IP is unconfigured or mapped to localhost!"; \
-		exit 1; \
-	fi
-	ANSIBLE_HOST_KEY_CHECKING=False \
-	ansible-playbook -i $(PRODUCTION_INVENTORY) \
-	$(PLAYBOOK_HARDEN) \
-	--private-key=~/.ssh/$(PRODUCTION_SSH_KEY_NAME) \
-	--extra-vars "ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=root ansible_port=$(PRODUCTION_ROOT_SSH_PORT) custom_ssh_port=$(CUSTOM_SSH_PORT) run_heavy_updates=$(RUN_HEAVY_UPDATES) sysctl_overwrite={}"
-
-# =============================================================================
-# STEP 3: ADMINISTRATOR PROVISIONING & ROOT ACCOUNT LOCKDOWN
-# =============================================================================
-
-staging-bootstrap: ## STEP 3 (STAGING): Access via custom port to provision secure sudo user and lock root
-	@echo "NOTICE: Connecting via secure custom port to configure admin privilege layers..."
-	ANSIBLE_HOST_KEY_CHECKING=False \
-	ansible-playbook -i $(STAGING_INVENTORY) \
-	$(PLAYBOOK_BOOTSTRAP) \
-	--private-key=~/.ssh/$(STAGING_SSH_KEY_NAME) \
-	--extra-vars "ansible_host=$(STAGING_SERVER_IP) ansible_ssh_user=$(ANSIBLE_SUDO_USER) ansible_become=true ansible_become_method=sudo ansible_port=$(STAGING_SSH_PORT) created_username=$(ANSIBLE_SUDO_USER) ssh_key_path=$(HOME)/.ssh/$(STAGING_SSH_KEY_NAME).pub"
-
-production-bootstrap: ## STEP 3 (PRODUCTION): Connect via live custom port to provision secure user and lock root
-	@echo "WARNING: Executing final server provisioning and root account lockdown on live node..."
-	@if [ "$(PRODUCTION_SERVER_IP)" = "127.0.0.1" ]; then \
-		echo "ERROR: Aborting execution. PRODUCTION_SERVER_IP is unconfigured or mapped to localhost!"; \
-		exit 1; \
-	fi
-	ANSIBLE_HOST_KEY_CHECKING=False \
-	ansible-playbook -i $(PRODUCTION_INVENTORY) \
-	$(PLAYBOOK_BOOTSTRAP) \
-	--private-key=~/.ssh/$(PRODUCTION_SSH_KEY_NAME) \
-	--extra-vars "ansible_host=$(PRODUCTION_SERVER_IP) ansible_ssh_user=$(ANSIBLE_SUDO_USER) ansible_become=true ansible_become_method=sudo ansible_port=$(PRODUCTION_SSH_PORT) created_username=$(ANSIBLE_SUDO_USER) ssh_key_path=$(HOME)/.ssh/$(PRODUCTION_SSH_KEY_NAME).pub"
-
-staging: ## Execute full zırhlı simulation pipeline against local sandbox
-	@echo "🚀 Starting Staging Deployment Lifecycle against Vagrant Sandbox..."
-	$(MAKE) staging-push-root-key
-	$(MAKE) staging-harden
-	$(MAKE) staging-bootstrap
-	
-production: ## Execute full hardened pipeline against live production node
-	@echo "WARNING: Starting Production Deployment Lifecycle against live node..."
-	$(MAKE) production-push-root-key
-	$(MAKE) production-harden
-	$(MAKE) production-bootstrap
-	
-# =============================================================================
-# CONVENIENCE SSH TUNNELING SHORTCUTS
-# =============================================================================
-
-staging-ssh-user: ## Establish an instant passwordless SSH terminal with the Staging admin user
-	ssh -i ~/.ssh/$(STAGING_SSH_KEY_NAME) -p $(STAGING_SSH_PORT) $(ANSIBLE_SUDO_USER)@$(STAGING_SERVER_IP) -o StrictHostKeyChecking=no
-
-production-ssh-user: ## Establish an instant passwordless SSH terminal with the Live production user
-	ssh -i ~/.ssh/$(PRODUCTION_SSH_KEY_NAME) -p $(PRODUCTION_SSH_PORT) $(ANSIBLE_SUDO_USER)@$(PRODUCTION_SERVER_IP) -o StrictHostKeyChecking=no
