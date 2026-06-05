@@ -3,6 +3,11 @@
 # UBUNTU HARDENING - TASKS ROUTER (Central Distribution Center)
 # =============================================================================
 
+# =============================================================================
+# HARDENING ENGINE ORCHESTRATION LAYER
+# =============================================================================
+
+# Route and execute individual hardening stages conditionally based on configuration switches
 - name: "OPERATIONS | 1.0 - Trigger System Update Tasks"
   ansible.builtin.include_tasks: 0_system_update.yml
   when: ubuntu_hardening_perform_update | bool

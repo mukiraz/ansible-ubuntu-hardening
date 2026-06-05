@@ -3,14 +3,20 @@
 # SYSTEM PREP | STEP 0 - OS Update & Core Packages Installation
 # =============================================================================
 
+# =============================================================================
+# STEP 0.1: SYSTEM UPGRADE LIFECYCLE
+# =============================================================================
 - name: "PREP | 0.1 - Update apt cache and upgrade all system packages"
   ansible.builtin.apt:
     update_cache: yes
     upgrade: dist
-    cache_valid_time: 3600 # Skip update if cache was refreshed within the last 1 hour (saves time)
+    cache_valid_time: 3600
   when: run_heavy_updates | default(true) | bool
   tags: [system_upgrade]
 
+# =============================================================================
+# STEP 0.2: CORE DEPENDENCIES DEPLOYMENT
+# =============================================================================
 - name: "PREP | 0.2 - Install essential dependencies for Docker & Utilities"
   ansible.builtin.apt:
     name:
@@ -26,6 +32,9 @@
     update_cache: yes
   tags: [system_packages]
 
+# =============================================================================
+# STEP 0.3: SYSTEM HOUSEKEEPING AND CLEANUP
+# =============================================================================
 - name: "PREP | 0.3 - Clean up leftover and unused packages"
   ansible.builtin.apt:
     autoclean: yes

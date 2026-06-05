@@ -13,11 +13,11 @@ ssh_key_name: >-
     lookup('env', 'PRODUCTION_SSH_KEY_NAME') if (inventory_file is search('production'))
     else lookup('env', 'STAGING_SSH_KEY_NAME') | default('id_ed25519_generic', true)
   }}
-ssh_key_path: "~/.ssh/{{ ssh_key_name }}.pub"
+ssh_key_path: "{{ lookup('env', 'HOME') }}/.ssh/{{ ssh_key_name }}.pub"
 
 # --- 2. FIREWALL AND PORT CONFIGURATIONS ---
-# Parse the secure custom SSH port from environment variables, defaulting to 48322
-custom_ssh_port: "{{ lookup('env', 'CUSTOM_SSH_PORT') | default('48322', true) }}"
+# Parse the secure custom SSH port from environment variables, defaulting to 55555
+custom_ssh_port: "{{ lookup('env', 'CUSTOM_SSH_PORT') | default('55555', true) }}"
 
 # Enforce strict synchronization between the SSH application layer and UFW rules
 allowed_firewall_ports:
@@ -41,3 +41,8 @@ sysctl_overwrite:
 security_init_network_ipv4_forwarding: true
 security_restrict_core_dumps: true
 disabled_services: []
+
+# --- 4. DEV-SEC COMPLIANCE ALIGNMENT ---
+# Enforce dev-sec role to respect our custom secure SSH port during hardening
+sys_ssh_ports:
+  - "{{ custom_ssh_port }}"
