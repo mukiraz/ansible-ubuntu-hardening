@@ -247,4 +247,4 @@ create-env-file: ## Interactive wizard to securely generate the initial .env fil
 	echo "PRODUCTION_SSH_KEY_NAME=$$pkey\nPRODUCTION_SERVER_IP=$$pip\nPRODUCTION_ROOT_PASSWORD=$$ppass" >> .env; \
 	echo "-----------------------------------------------------------------------------"; \
 	echo "$(COLOR_SUCCESS)SUCCESS: .env configuration generated successfully!$(COLOR_RESET)"; \
-	echo "=============================================================================";
+	echo "============================================================================";
