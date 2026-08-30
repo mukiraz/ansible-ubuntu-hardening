@@ -49,16 +49,16 @@ COLOR_ERROR              := \033[31m
 # Arguments: 1=ROOT_PASS, 2=ROOT_PORT, 3=KEY_NAME, 4=SERVER_IP
 define macro_push_root_key
 	@echo "$(COLOR_INFO)NOTICE: Injecting root key and provisioning sudo user into target...$(COLOR_RESET)"
-	sshpass -p "$(1)" ssh-copy-id -o StrictHostKeyChecking=no -p $(2) -i ~/.ssh/$(3).pub root@$(4)
-	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -p $(2) root@$(4) \
+	sshpass -p "$(1)" ssh-copy-id -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -p $(2) -i ~/.ssh/$(3).pub root@$(4)
+	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -i ~/.ssh/$(3) -p $(2) root@$(4) \
 		"id -u $(ANSIBLE_SUDO_USER) >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo $(ANSIBLE_SUDO_USER)"
-	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -p $(2) root@$(4) "cat > /tmp/$(ANSIBLE_SUDO_USER).pub" < ~/.ssh/$(3).pub
-	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -p $(2) root@$(4) \
+	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -i ~/.ssh/$(3) -p $(2) root@$(4) "cat > /tmp/$(ANSIBLE_SUDO_USER).pub" < ~/.ssh/$(3).pub
+	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -i ~/.ssh/$(3) -p $(2) root@$(4) \
 		"mkdir -p /home/$(ANSIBLE_SUDO_USER)/.ssh && chmod 700 /home/$(ANSIBLE_SUDO_USER)/.ssh && cat /tmp/$(ANSIBLE_SUDO_USER).pub >> /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chmod 600 /home/$(ANSIBLE_SUDO_USER)/.ssh/authorized_keys && chown -R $(ANSIBLE_SUDO_USER):$(ANSIBLE_SUDO_USER) /home/$(ANSIBLE_SUDO_USER)/.ssh && rm -f /tmp/$(ANSIBLE_SUDO_USER).pub"
-	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -p $(2) root@$(4) \
+	sshpass -p "$(1)" ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -i ~/.ssh/$(3) -p $(2) root@$(4) \
 		"echo '$(ANSIBLE_SUDO_USER) ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/$(ANSIBLE_SUDO_USER) && chmod 440 /etc/sudoers.d/$(ANSIBLE_SUDO_USER)"
 	@echo "$(COLOR_SUCCESS)SUCCESS: Sudo user configured. Verifying secure handshake...$(COLOR_RESET)"
-	ssh -i ~/.ssh/$(3) -p $(2) -o StrictHostKeyChecking=no $(ANSIBLE_SUDO_USER)@$(4) "echo 'SUCCESS: Remote Server Sudo User Handshake Established!'"
+	ssh -i ~/.ssh/$(3) -o IdentitiesOnly=yes -p $(2) -o StrictHostKeyChecking=no $(ANSIBLE_SUDO_USER)@$(4) "echo 'SUCCESS: Remote Server Sudo User Handshake Established!'"
 endef
 
 # Function to execute core Ansible playbooks uniformly
