@@ -19,42 +19,191 @@
   tags: [ssh_config, systemd_fix]
 
 # =============================================================================
+# STEP 5.0c/d: DROP-IN OVERRIDE CLEANUP (sshd_config.d/*.conf)
+# =============================================================================
+# Ubuntu/cloud-init base image'ları (ör. Vagrant box'ın kendi ilk-bootstrap
+# ihtiyacı için) genelde /etc/ssh/sshd_config.d/ altına PermitRootLogin/
+# PasswordAuthentication'ı "yes" yapan bir drop-in dosyası (ör. 99-root-login.conf)
+# bırakır. sshd, "Include /etc/ssh/sshd_config.d/*.conf" direktifini ANA dosyanın
+# EN BAŞINDA işler ve "ilk eşleşen direktif kazanır" kuralını uyguladığı için, bu
+# drop-in dosyalar STEP 5.1'de ana sshd_config'e yazdığımız güvenli değerleri
+# SESSİZCE EZER — `sshd -T` (efektif config) bunu doğrulayana kadar fark edilmez.
+# İsme göre değil, İÇERİĞE göre buluyoruz ki "99-root-login.conf veya benzeri"
+# adlandırılmış her türlü gelecekteki drop-in de yakalansın.
+- name: "SSH | 5.0c - Discover sshd_config.d overrides that re-permit root/password login"
+  ansible.builtin.find:
+    paths: /etc/ssh/sshd_config.d
+    patterns: "*.conf"
+    contains: '(PermitRootLogin|PasswordAuthentication)\s+yes'
+  register: ubuntu_hardening_ssh_dropin_overrides
+  tags: [ssh_config]
+
+- name: "SSH | 5.0d - Remove sshd_config.d overrides that re-permit root/password login"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ ubuntu_hardening_ssh_dropin_overrides.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  notify: trigger restart sshd
+  tags: [ssh_config]
+
+# =============================================================================
 # STEP 5.1: SSH DAEMON CORE CONFIGURATION
 # =============================================================================
 
-- name: "SSH | 5.1a - Change Default SSH Port"
+# NOT (MC-146 doğrulamasında bulundu): Ubuntu'nun stok sshd_config'i + önceki hardening
+# çalıştırmaları bazı direktifleri (özellikle PermitRootLogin/PasswordAuthentication)
+# BİRDEN FAZLA kez içerebiliyor (distro varsayılanı + bizim eklediğimiz satır bir arada).
+# ansible.builtin.lineinfile'ın resmi davranışı: "regexp birden fazla satırla eşleşirse
+# SADECE SONUNCUSU değiştirilir, öncekiler dokunulmadan kalır" — dosyada erken bir satır
+# hâlâ eski/güvensiz değerde kalabiliyor ve sshd "ilk eşleşen direktif kazanır" kuralıyla
+# TAM O satırı okuyor (bkz. `sshd -T` ile ampirik doğrulama). Bu yüzden her direktif için
+# ÖNCE tüm mevcut satırları PURGE ediyoruz (state: absent — TÜM eşleşmeleri kaldırır),
+# SONRA doğru değeri TEK satır olarak ekliyoruz. İki adımlı bu desen idempotent ve
+# mükerrer/çelişkili satır bırakmaz.
+
+- name: "SSH | 5.1a(i) - Purge existing Port lines"
   ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
-    regexp: '^#?Port\s+'
+    regexp: '^#?\s*Port\s+'
+    state: absent
+  tags: [ssh_config]
+
+- name: "SSH | 5.1a(ii) - Set SSH Port"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
     line: "Port {{ ubuntu_hardening_ssh_port }}"
     state: present
+    insertafter: EOF
   notify: trigger restart sshd
   tags: [ssh_config]
 
-- name: "SSH | 5.1b - Disable Root Login directly"
+- name: "SSH | 5.1b(i) - Purge existing PermitRootLogin lines"
   ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
-    regexp: '^#?PermitRootLogin\s+'
+    regexp: '^#?\s*PermitRootLogin\s+'
+    state: absent
+  tags: [ssh_config]
+
+- name: "SSH | 5.1b(ii) - Disable Root Login directly (CIS 5.2.10)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
     line: "PermitRootLogin no"
     state: present
+    insertafter: EOF
   notify: trigger restart sshd
   tags: [ssh_config]
 
-- name: "SSH | 5.1c - Disable Password Authentication"
+- name: "SSH | 5.1c(i) - Purge existing PasswordAuthentication lines"
   ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
-    regexp: '^#?PasswordAuthentication\s+'
+    regexp: '^#?\s*PasswordAuthentication\s+'
+    state: absent
+  tags: [ssh_config]
+
+- name: "SSH | 5.1c(ii) - Disable Password Authentication (CIS 5.2.4)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
     line: "PasswordAuthentication no"
     state: present
+    insertafter: EOF
   notify: trigger restart sshd
   tags: [ssh_config]
 
-- name: "SSH | 5.1d - Disable Empty Passwords"
+- name: "SSH | 5.1d(i) - Purge existing PermitEmptyPasswords lines"
   ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
-    regexp: '^#?PermitEmptyPasswords\s+'
+    regexp: '^#?\s*PermitEmptyPasswords\s+'
+    state: absent
+  tags: [ssh_config]
+
+- name: "SSH | 5.1d(ii) - Disable Empty Passwords (CIS 5.2.8)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
     line: "PermitEmptyPasswords no"
     state: present
+    insertafter: EOF
+  notify: trigger restart sshd
+  tags: [ssh_config]
+
+- name: "SSH | 5.1e(i) - Purge existing X11Forwarding lines"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?\s*X11Forwarding\s+'
+    state: absent
+  tags: [ssh_config]
+
+- name: "SSH | 5.1e(ii) - Disable X11 Forwarding (CIS 5.2.6 — headless sunucuda gereksiz saldırı yüzeyi)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    line: "X11Forwarding no"
+    state: present
+    insertafter: EOF
+  notify: trigger restart sshd
+  tags: [ssh_config]
+
+- name: "SSH | 5.1f(i) - Purge existing MaxAuthTries lines"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?\s*MaxAuthTries\s+'
+    state: absent
+  tags: [ssh_config]
+
+- name: "SSH | 5.1f(ii) - Limit Authentication Attempts (CIS 5.2.5)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    line: "MaxAuthTries 4"
+    state: present
+    insertafter: EOF
+  notify: trigger restart sshd
+  tags: [ssh_config]
+
+- name: "SSH | 5.1g(i) - Purge existing LoginGraceTime lines"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?\s*LoginGraceTime\s+'
+    state: absent
+  tags: [ssh_config]
+
+- name: "SSH | 5.1g(ii) - Limit Login Grace Time (CIS 5.2.16)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    line: "LoginGraceTime 60"
+    state: present
+    insertafter: EOF
+  notify: trigger restart sshd
+  tags: [ssh_config]
+
+- name: "SSH | 5.1h(i) - Purge existing ClientAliveInterval lines"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?\s*ClientAliveInterval\s+'
+    state: absent
+  tags: [ssh_config]
+
+- name: "SSH | 5.1h(ii) - Enable Idle Session Timeout Interval (CIS 5.2.17)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    line: "ClientAliveInterval 300"
+    state: present
+    insertafter: EOF
+  notify: trigger restart sshd
+  tags: [ssh_config]
+
+- name: "SSH | 5.1i(i) - Purge existing ClientAliveCountMax lines"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?\s*ClientAliveCountMax\s+'
+    state: absent
+  tags: [ssh_config]
+
+- name: "SSH | 5.1i(ii) - Enable Idle Session Timeout Count Max (CIS 5.2.17)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    line: "ClientAliveCountMax 2"
+    state: present
+    insertafter: EOF
   notify: trigger restart sshd
   tags: [ssh_config]
 
