@@ -1,0 +1,45 @@
+MIT License
+
+Copyright (c) 2026 Murat Ugur Kiraz
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+=============================================================================
+CRITICAL INFRASTRUCTURE DISCLAIMER & ANNEX
+=============================================================================
+
+1. SYSTEM LOCKOUT & DOWNTIME WARNING:
+This automation suite modifies critical low-level kernel parameters, operating
+system network configurations, configurations of the systemd-ssh-generator, 
+and firewall routing matrices. Improper scheduling or out-of-order execution 
+of these playbooks against live environments WILL cause immediate infrastructure 
+lockouts, unrecoverable SSH drops, and server downtime.
+
+2. MANDATORY RECOVERY PREPARATION:
+Before executing any targets provided within this repository (including but not 
+limited to 'make production-harden' or 'make production-bootstrap') against a 
+live Virtual Private Server (VPS) or bare-metal node, the operator is STRICTLY 
+REQUIRED to perform a full system state snapshot or image backup via their 
+infrastructure provider's control panel (e.g., Contabo, Hetzner, DigitalOcean).
+
+3. NO LIABILITY ACCEPTANCE:
+The author maintains absolute zero liability for any broken production nodes, 
+lost data, compromised system access, or commercial damages arising from the 
+utilization of this automation framework. You execute these orchestration 
+routines entirely at your own risk.

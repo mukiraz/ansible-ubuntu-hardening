@@ -1,0 +1,17 @@
+---
+# =============================================================================
+# RESTRICTED (NO-SUDO) DEPLOY USER PROVISIONING
+# =============================================================================
+# OPTIONAL step, run AFTER 00_bootstrap_server.yml (root is already locked at
+# this point) — connects as the admin user established in that step and creates
+# an ADDITIONAL, unprivileged account for routine/high-frequency use.
+- name: Provision an additional restricted, sudo-less deploy user
+  hosts: all
+  gather_facts: false
+  become: true
+  become_method: sudo
+
+  tasks:
+    - name: Execute Restricted User Provisioning via Role
+      ansible.builtin.include_role:
+        name: "../roles/restricted_user"

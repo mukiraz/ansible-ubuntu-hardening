@@ -1,0 +1,23 @@
+---
+# =============================================================================
+# FINAL SERVER BOOTSTRAP PLAYBOOK
+# =============================================================================
+- name: Final Server Bootstrap - Setup Sudo User and Lock Root
+  hosts: all
+  gather_facts: yes
+  become: yes
+  become_method: sudo
+
+  # --- VARIABLE ADAPTER LAYER ---
+  # Map centralized variables from group_vars/all.yml to role requirements
+  vars:
+    bootstrap_username: "{{ created_username }}"
+    bootstrap_ssh_key_path: "{{ ssh_key_path }}"
+
+  tasks:
+    # =========================================================================
+    # CLOSING PHASE: EXECUTE BOOTSTRAP ROLE
+    # =========================================================================
+    - name: Execute Server Finalization via Bootstrap Role
+      ansible.builtin.include_role:
+        name: "../roles/bootstrap"

@@ -1,0 +1,80 @@
+---
+# =============================================================================
+# RESTRICTED (NO-SUDO) DEPLOY USER
+# =============================================================================
+# Creates an ADDITIONAL, project-agnostic user with SSH-key-only access and NO
+# sudo privileges by default. Meant for routine, high-frequency operations
+# (CI/CD, app deploys) where the admin/bootstrap user's full sudo would be an
+# unnecessary blast-radius increase if THIS account's key were ever compromised
+# — the admin user stays reserved for rare/emergency use.
+#
+# Any privilege this account needs beyond plain login (docker group membership,
+# a narrowly-scoped sudoers rule for one exact command) is the CONSUMING
+# PROJECT's responsibility to layer on top — this role only creates the bare,
+# unprivileged account. It is intentionally silent on what the account is FOR.
+#
+# NEDEN ham `shell` + gömülü `sudo`, `ansible.builtin.user`/`file`/`authorized_key`
+# DEĞİL: bu ortamda Ansible'ın `become` mekanizması ampirik olarak doğrulandı ki
+# GERÇEKTEN root'a yükselmiyor (bir teşhis görevi `whoami` çalıştırıp bağlanan kullanıcıyı
+# döndürdü, `root` değil) — connection user zaten NOPASSWD sudo'ya sahip olsa bile.
+# `../roles/bootstrap` AYNI nedenle AYNI deseni kullanıyor (`shell: "sudo passwd -l
+# root"` vb.) — become'a güvenmek yerine `sudo`'yu shell komutunun İÇİNE gömüyoruz,
+# bu OS'un kendi sudoers mekanizmasından geçtiği için become'un çalışıp çalışmaması
+# hiç önemli değil.
+
+- name: "RESTRICTED_USER | Hesap zaten var mı kontrol et (idempotent)"
+  ansible.builtin.command: "id -u {{ restricted_username }}"
+  register: restricted_user_exists
+  changed_when: false
+  failed_when: false
+
+- name: "RESTRICTED_USER | Hesabı oluştur (yoksa) — SSH-key-only, şifre YOK, sudo YOK"
+  ansible.builtin.shell: >
+    sudo useradd -m -s /bin/bash
+    {{ ('-G ' + restricted_groups) if (restricted_groups | default('') | trim) != '' else '' }}
+    {{ restricted_username }}
+  when: restricted_user_exists.rc != 0
+
+- name: "RESTRICTED_USER | Grup üyeliğini garanti et (hesap ZATEN var olsa bile, idempotent)"
+  ansible.builtin.shell: "sudo usermod -aG {{ restricted_groups }} {{ restricted_username }}"
+  when: (restricted_groups | default('') | trim) != ''
+  changed_when: false
+
+- name: "RESTRICTED_USER | .ssh dizinini garanti et"
+  ansible.builtin.shell: >
+    sudo mkdir -p /home/{{ restricted_username }}/.ssh &&
+    sudo chown {{ restricted_username }}:{{ restricted_username }} /home/{{ restricted_username }}/.ssh &&
+    sudo chmod 700 /home/{{ restricted_username }}/.ssh
+  changed_when: false
+
+- name: "RESTRICTED_USER | Verilen SSH public key'i oku (kontrol makinesinde, LOKAL dosya okuma — become'dan bağımsız)"
+  ansible.builtin.set_fact:
+    restricted_public_key: "{{ lookup('file', restricted_ssh_key_path) }}"
+
+- name: "RESTRICTED_USER | SSH public key'i authorize et (idempotent — zaten varsa tekrar eklenmez)"
+  ansible.builtin.shell: >
+    sudo touch /home/{{ restricted_username }}/.ssh/authorized_keys &&
+    (sudo grep -qF "{{ restricted_public_key }}" /home/{{ restricted_username }}/.ssh/authorized_keys ||
+     echo "{{ restricted_public_key }}" | sudo tee -a /home/{{ restricted_username }}/.ssh/authorized_keys > /dev/null)
+  changed_when: false
+
+- name: "RESTRICTED_USER | authorized_keys sahiplik/izinlerini garanti et"
+  ansible.builtin.shell: >
+    sudo chown {{ restricted_username }}:{{ restricted_username }} /home/{{ restricted_username }}/.ssh/authorized_keys &&
+    sudo chmod 600 /home/{{ restricted_username }}/.ssh/authorized_keys
+  changed_when: false
+
+- name: "RESTRICTED_USER | Hesabın var olduğunu ve yanlışlıkla sudo grubuna düşmediğini doğrula"
+  ansible.builtin.command: "id {{ restricted_username }}"
+  register: restricted_user_check
+  changed_when: false
+  failed_when: "'sudo' in restricted_user_check.stdout"
+
+- name: "RESTRICTED_USER | Son doğrulama bilgisini göster"
+  ansible.builtin.debug:
+    msg:
+      - "Restricted user ready!"
+      - "- User: {{ restricted_username }} ({{ restricted_user_check.stdout }})"
+      - "- Groups requested: {{ restricted_groups | default('none') }}"
+      - "- Sudo: NONE (bilerek yok — bu hesabın ihtiyaç duyduğu her ek yetki, tüketen projenin KENDİ provisioning'inde dar kapsamlı bir /etc/sudoers.d/ kuralıyla eklenmeli)"
+      - "- SSH Key: /home/{{ restricted_username }}/.ssh/authorized_keys"

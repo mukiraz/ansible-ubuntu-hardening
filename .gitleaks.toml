@@ -1,0 +1,32 @@
+# Gitleaks yapılandırması: varsayılan kurallar + public IPv4 kuralı.
+# Gitleaks varsayılan olarak IP adreslerini "sır" saymaz; bu kural o boşluğu kapatır.
+# Not: [[rules.allowlists]] söz dizimi gitleaks >= 8.21 gerektirir.
+#      Daha eski sürümde [rules.allowlist] (tekil) kullan.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "public-ipv4"
+description = "Public IPv4 address (sunucu IP'si sızıntısı)"
+regex = '''\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b'''
+
+  [[rules.allowlists]]
+  description = "Private, loopback, link-local, CGNAT ve dokümantasyon aralıkları"
+  regexes = [
+    '''^(?:10\.|127\.|0\.0\.0\.0|255\.255\.255\.255|169\.254\.|192\.168\.)''',
+    '''^172\.(?:1[6-9]|2\d|3[01])\.''',
+    '''^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.''',
+    '''^(?:192\.0\.2\.|198\.51\.100\.|203\.0\.113\.)''',
+  ]
+
+  [[rules.allowlists]]
+  description = "Vendored dev-sec rolündeki CIS madde numaraları (IP değil) — .ip-allowlist ile senkron tut"
+  regexes = [
+    '''^2\.3\.3\.[56]$''',
+    '''^2\.2\.4\.1$''',
+  ]
+
+  [[rules.allowlists]]
+  description = ".ip-allowlist dosyasının kendisi"
+  paths = ['''(^|/)\.ip-allowlist$''']

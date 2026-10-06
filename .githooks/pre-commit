@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+# Pre-commit: gitleaks (sırlar) + scan-public-ips.py (public IP / SSH port)
+# Etkinleştirme (her clone / git init sonrası bir kez):
+#   git config core.hooksPath .githooks
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+
+if command -v gitleaks >/dev/null 2>&1; then
+  if gitleaks git --help >/dev/null 2>&1; then
+    gitleaks git --staged --config "$ROOT/.gitleaks.toml" --redact --no-banner "$ROOT"
+  else
+    gitleaks protect --staged --config "$ROOT/.gitleaks.toml" --redact --no-banner
+  fi
+else
+  echo "UYARI: gitleaks kurulu değil, sır taraması atlandı." >&2
+fi
+
+python3 "$ROOT/scripts/scan-public-ips.py" --staged --root "$ROOT"

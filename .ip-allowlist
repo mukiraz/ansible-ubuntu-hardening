@@ -1,0 +1,9 @@
+# scan-public-ips.py için bilinçli olarak izin verilen değerler.
+# Satır başına bir IP veya port; '#' sonrası yorum (neden zararsız olduğunu yaz).
+# Buraya eklenen her değer .gitleaks.toml'daki public-ipv4 allowlist'ine de eklenmeli.
+# Gerçek sunucu adresi ASLA buraya eklenmez.
+
+# Vendored ansible/roles/dev-sec.os-hardening: CIS benchmark madde numaraları (IP değil)
+2.3.3.5      # CIS madde no. (tasks/pam.yml, libuser.conf.j2, rhel_system_auth.j2)
+2.3.3.6      # CIS madde no. (rhel_system_auth.j2)
+2.2.4.1      # CIS madde no. (tasks/sysctl.yml, rhel_sysconfig_init.j2)

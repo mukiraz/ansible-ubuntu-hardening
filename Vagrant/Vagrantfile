@@ -1,0 +1,99 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+# =============================================================================
+# VAGRANT INFRASTRUCTURE CONFIGURATION (Refactored & .env Synced)
+# =============================================================================
+
+require 'fileutils'
+
+# =============================================================================
+# STEP 1: ENVIRONMENT CONFIGURATION PARSING
+# =============================================================================
+# Parse and load environment variables safely from the centralized .env file
+
+env_file = File.expand_path("../.env", File.dirname(__FILE__))
+
+if File.exist?(env_file)
+  File.readlines(env_file).each do |line|
+    clean_line = line.strip
+    next if clean_line.empty? || clean_line.start_with?('#')
+    
+    clean_line = clean_line.split('#').first.strip
+    key, value = clean_line.split('=', 2)
+    
+    if key && value
+      ENV[key.strip] = value.strip.gsub(/^["']|["']$/, '')
+    end
+  end
+else
+  puts "NOTICE: .env file not found at #{env_file}. Using default fallback values."
+end
+
+# =============================================================================
+# STEP 2: VARIABLE EXTREACTION & SYNCHRONIZATION
+# =============================================================================
+# Extract environment variables and align them with Makefile specifications
+
+ROOT_PASS = ENV['STAGING_ROOT_PASSWORD'] || 'placeholder_dont_use_in_prod'
+VM_IP     = ENV['STAGING_SERVER_IP']     || '192.168.56.10'
+
+# =============================================================================
+# STEP 3: VIRTUAL MACHINE ORCHESTRATION ENGINE
+# =============================================================================
+
+Vagrant.configure("2") do |config|
+  # --- 3.1 BASE BOX SELECTION ---
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.hostname = "ubuntu-24-04-staging"
+  
+  # --- 3.2 NETWORK CONFIGURATION ---
+  config.vm.network "private_network", ip: VM_IP
+
+  # --- 3.3 REAL-WORLD HANDSHAKE EMULATION ---
+  # Disable automatic key rotation to simulate production deployment environments
+  config.ssh.insert_key = false
+
+  # --- 3.4 STORAGE CAPACITY PROVISIONING ---
+  if Vagrant.has_plugin?("vagrant-disksize")
+    config.disksize.size = '75GB'
+  else
+    config.vm.provision "shell", inline: "echo 'INFO: 75GB Disk simulation skipped. Install vagrant-disksize plugin to enable.'", run: "always"
+  end
+
+  # --- 3.5 VIRTUALBOX PROVIDER HARDWARE PROFILE ---
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "Ubuntu_24_04_Staging"
+    vb.memory = "8192" 
+    vb.cpus = 4        
+    vb.customize ["modifyvm", :id, "--vram", "32"]
+    vb.gui = false
+  end
+  
+  # --- 3.6 RAW CLOUD SERVER INFRASTRUCTURE EMULATION ---
+  config.vm.provision "shell", inline: <<-SHELL
+    echo "----------------------------------------------------------------"
+    echo "NOTICE: Initializing Raw Cloud Server Emulation (Contabo Sandbox)..."
+    echo "----------------------------------------------------------------"
+
+    # Purge default keys right after boot sequence to enforce a strict security audit
+    rm -rf /home/vagrant/.ssh/authorized_keys
+    rm -rf /root/.ssh/authorized_keys
+
+    # Enforce root credentials specified in the environment configuration panel
+    echo "root:#{ROOT_PASS}" | chpasswd
+
+    # Temporarily allow root credential parsing over default port 22
+    mkdir -p /etc/ssh/sshd_config.d
+    echo "PermitRootLogin yes" > /etc/ssh/sshd_config.d/99-root-login.conf
+    echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config.d/99-root-login.conf
+    
+    sed -i 's/.*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+    sed -i 's/.*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+    # Reload systemd configuration layers and cycle the SSH daemon state
+    systemctl daemon-reload
+    systemctl restart ssh
+
+    echo "SUCCESS: Provisioning complete. Target accepts Root password access on Port 22."
+  SHELL
+end
