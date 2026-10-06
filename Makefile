@@ -99,7 +99,8 @@ endef
         staging-harden production-harden staging-bootstrap production-bootstrap \
         staging production staging-ssh-user production-ssh-user \
         staging-restricted-user production-restricted-user \
-        staging-ssh-restricted-user production-ssh-restricted-user
+        staging-ssh-restricted-user production-ssh-restricted-user \
+        install-gitleaks install-hooks secret-scan
 
 help: ## Display this help menu with all available automation targets
 	@echo "Available Infrastructure Automation Commands:"
@@ -164,10 +165,67 @@ setup: check-keys ## Install local system dependencies on the Ubuntu host machin
 	@echo "Ansible Version: $$(ansible --version | head -n 1)"
 	@echo "Vagrant Version: $$(vagrant --version)"
 	@echo "--------------------------------------------------"
+	@$(MAKE) --no-print-directory install-gitleaks install-hooks
 
 check-deps: # Internal helper to validate hypervisor components
 	@which vagrant > /dev/null || (echo "$(COLOR_ERROR)ERROR: Vagrant not found! Run 'make setup' first.$(COLOR_RESET)" && exit 1)
 	@pgrep -f "VirtualBox|VBox" > /dev/null && echo "$(COLOR_INFO)NOTICE: VirtualBox core service engine is active.$(COLOR_RESET)" || true
+
+# =============================================================================
+# SECRET SCANNING (gitleaks + public IP / SSH port guard)
+# =============================================================================
+# gitleaks resmi bir release'ten, sürümü sabitlenerek ve SHA-256 doğrulanarak kurulur.
+# Ubuntu 24.04 apt paketi (8.16) çok eski: `gitleaks git`/`dir` (>= 8.19) ve
+# .gitleaks.toml'daki [[rules.allowlists]] söz dizimi (>= 8.21) onda yok.
+GITLEAKS_VERSION     ?= 8.30.1
+GITLEAKS_MIN_VERSION := 8.21.0
+
+install-gitleaks: ## Install gitleaks (pinned, checksum-verified release) if missing or older than 8.21
+	@if command -v gitleaks >/dev/null 2>&1 && \
+	   [ "$$(printf '%s\n' "$(GITLEAKS_MIN_VERSION)" "$$(gitleaks version | sed 's/^v//')" | sort -V | head -n1)" = "$(GITLEAKS_MIN_VERSION)" ]; then \
+		echo "$(COLOR_SUCCESS)SUCCESS: gitleaks $$(gitleaks version) already installed.$(COLOR_RESET)"; \
+	else \
+		set -e; \
+		case "$$(uname -m)" in \
+			x86_64) arch=x64 ;; \
+			aarch64|arm64) arch=arm64 ;; \
+			*) echo "$(COLOR_ERROR)ERROR: Unsupported architecture $$(uname -m) for gitleaks.$(COLOR_RESET)"; exit 1 ;; \
+		esac; \
+		v="$(GITLEAKS_VERSION)"; tgz="gitleaks_$${v}_linux_$${arch}.tar.gz"; \
+		base="https://github.com/gitleaks/gitleaks/releases/download/v$${v}"; \
+		tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
+		echo "$(COLOR_INFO)NOTICE: Installing gitleaks v$${v} ($${arch}) into /usr/local/bin...$(COLOR_RESET)"; \
+		curl -fsSL -o "$$tmp/$$tgz" "$$base/$$tgz"; \
+		curl -fsSL -o "$$tmp/checksums.txt" "$$base/gitleaks_$${v}_checksums.txt"; \
+		(cd "$$tmp" && grep " $$tgz\$$" checksums.txt | sha256sum -c -); \
+		tar -xzf "$$tmp/$$tgz" -C "$$tmp" gitleaks; \
+		sudo install -m 0755 "$$tmp/gitleaks" /usr/local/bin/gitleaks; \
+		echo "$(COLOR_SUCCESS)SUCCESS: gitleaks $$(gitleaks version) installed.$(COLOR_RESET)"; \
+	fi
+
+# core.hooksPath .git/config'te tutulur, commit'lenmez — her clone / `git init` sonrası
+# bir kez gerekir. Sadece bu Makefile'ın dizini bir git reposunun KÖKÜ ise uygulanır:
+# repo başka bir projeye subtree/kopya olarak gömülüyse, üst reponun hook ayarını
+# var olmayan bir .githooks dizinine yönlendirip bozmamak için atlanır.
+install-hooks: ## Enable the pre-commit secret/public-IP scanning hook for this repository
+	@top="$$(git -C "$(CURDIR)" rev-parse --show-toplevel 2>/dev/null || true)"; \
+	if [ "$$top" = "$(CURDIR)" ] && [ -f "$(CURDIR)/.githooks/pre-commit" ]; then \
+		chmod +x "$(CURDIR)/.githooks/pre-commit" "$(CURDIR)/scripts/scan-public-ips.py"; \
+		git -C "$(CURDIR)" config core.hooksPath .githooks; \
+		echo "$(COLOR_SUCCESS)SUCCESS: Pre-commit hook enabled (core.hooksPath=.githooks).$(COLOR_RESET)"; \
+	else \
+		echo "$(COLOR_WARN)WARNING: $(CURDIR) is not a git repository root; pre-commit hook not enabled.$(COLOR_RESET)"; \
+	fi
+
+secret-scan: ## Scan working tree AND full git history for secrets and public IPs / real SSH ports
+	@rc=0; \
+	echo "$(COLOR_INFO)--- scan-public-ips.py (tree + history) ---$(COLOR_RESET)"; \
+	python3 scripts/scan-public-ips.py --history || rc=1; \
+	echo "$(COLOR_INFO)--- gitleaks git (history) ---$(COLOR_RESET)"; \
+	gitleaks git --config .gitleaks.toml --redact --no-banner . || rc=1; \
+	echo "$(COLOR_INFO)--- gitleaks dir (working tree) ---$(COLOR_RESET)"; \
+	gitleaks dir --config .gitleaks.toml --redact --no-banner . || rc=1; \
+	exit $$rc
 
 # =============================================================================
 # VAGRANT SANDBOX MANAGEMENT
