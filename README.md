@@ -609,17 +609,20 @@ gitleaks' default rules do not treat IP addresses as secrets, so this repository
 
 ### 12.1. Enable the Pre-Commit Hook
 
-Run once after every clone:
+`make setup` does this automatically. To enable it on its own (once after every clone or `git init` — the setting lives in `.git/config` and is not committed):
 
 ```bash
-git config core.hooksPath .githooks
+make install-hooks        # equivalent to: git config core.hooksPath .githooks
+make install-gitleaks     # installs a pinned, SHA-256-verified gitleaks release if missing or < 8.21
 ```
 
-The hook runs `gitleaks` (if installed) and `scan-public-ips.py --staged` against every commit and aborts it on a finding.
+The hook runs `gitleaks` and `scan-public-ips.py --staged` against every commit and aborts it on a finding. If `gitleaks` is not installed, only the IP scan runs (with a warning). Ubuntu's apt package (8.16) is too old for `.gitleaks.toml`, so use `make install-gitleaks`. `make install-hooks` is skipped when this directory is not a git repository root (e.g. when vendored into another project as a plain copy or subtree).
 
 ### 12.2. Manual Scan
 
 ```bash
+make secret-scan                                # all of the below in one go (tree + full history)
+
 python3 scripts/scan-public-ips.py              # working tree (respects .gitignore, skips .env*)
 python3 scripts/scan-public-ips.py --history    # working tree + full git history
 gitleaks dir --config .gitleaks.toml --redact -v .
